@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #f3ecdd;
+  --ink: #241c15;
+}
+
+html,
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+}
+
+/* Warm paper grain + a faint top-warmth wash, fixed behind everything. */
+body {
+  position: relative;
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(194, 65, 12, 0.06), transparent 60%),
+    radial-gradient(90% 60% at 100% 0%, rgba(202, 138, 4, 0.05), transparent 55%);
+  background-attachment: fixed;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.4;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+}
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Keyboard users get an unmissable brand-colored ring; mouse clicks don't. */
+:focus-visible {
+  outline: 2px solid #c2410c;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+::selection {
+  background: rgba(194, 65, 12, 0.18);
+}
+
+/* Warm, thin scrollbars to match the paper. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cdbfa6 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cdbfa6;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.font-display {
+  font-family: var(--font-fraunces), Georgia, serif;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Signal helpers, retuned to the warm palette. */
+.dot-overdue { background-color: #b4231c; }
+.dot-due { background-color: #a34d08; }
+.dot-week { background-color: #8a5606; }
+.dot-month { background-color: #0e7490; }
+.dot-later { background-color: #6e6152; }
+.dot-verify { background-color: #7c3aed; }
+.dot-worked { background-color: #6b5e4e; }
+.dot-newlead { background-color: #136b34; }
+
+.text-overdue { color: #b4231c; }
+.text-due { color: #a34d08; }
+.text-week { color: #8a5606; }
+.text-month { color: #0e7490; }
+.text-later { color: #6e6152; }
+.text-verify { color: #7c3aed; }
+.text-worked { color: #6b5e4e; }
+.text-newlead { color: #136b34; }
+
+.bg-overdue-50 { background-color: #fbeae7; }
+.bg-due-50 { background-color: #fdf0dd; }
+.bg-week-50 { background-color: #fcf3d6; }
+.bg-month-50 { background-color: #e2f2f4; }
+.bg-later-50 { background-color: #f1ece2; }
+.bg-verify-50 { background-color: #f2ecfd; }
+.bg-worked-50 { background-color: #f1ece2; }
+.bg-newlead-50 { background-color: #e4f3e8; }

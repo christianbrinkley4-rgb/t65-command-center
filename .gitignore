@@ -1,0 +1,23 @@
+node_modules
+.next
+.next-*
+out
+.env
+.env.local
+*.log
+.DS_Store
+*.tsbuildinfo
+
+# These two carry the shared login in plaintext, so they stay on this machine.
+# The scripts already read the password from T65_PASSWORD in the environment,
+# which is where it belongs — nothing in this repo needs the literal value.
+README.md
+HANDOFF_FOR_CLAUDE_CODE.md
+
+# Lead data. Names, phones and addresses of real people do not belong in a
+# code repo, private or not.
+mailers/
+*.csv
+*.xlsx
+*.xlsm
+*.xps
