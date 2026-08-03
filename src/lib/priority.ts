@@ -195,6 +195,72 @@ export function awaitingAppointmentOutcome(lead: LeadWithBucket): boolean {
   return !APPOINTMENT_RESOLVED.test(String(lead.status || ""));
 }
 
+/** Local midnight for a YYYY-MM-DD, so a date-only callback means "that day". */
+function startOfLocalDay(ymd: string): Date {
+  return new Date(ymd.slice(0, 10) + "T00:00:00");
+}
+
+/**
+ * The next moment this lead is actually owed attention. Null means "no
+ * commitment" — raw inventory you can dial whenever.
+ *
+ * A pending action wins over the date fields, and that is the whole point: the
+ * action carries the HOUR. `next_follow_up_date` is a date-only mirror kept in
+ * step so other views show the right day, and taking the earliest of the two
+ * would collapse "Thursday at 5:45pm" back to "Thursday at midnight" and hand
+ * the lead to you at breakfast.
+ */
+export function nextDueMoment(lead: LeadWithBucket): Date | null {
+  const pending = (lead._actions || [])
+    .filter((a) => a.status === "pending")
+    .map((a) => new Date(a.due_at).getTime())
+    .filter((t) => !isNaN(t));
+  if (pending.length) return new Date(Math.min(...pending));
+
+  const days: string[] = [];
+  if (lead.next_follow_up_date) days.push(String(lead.next_follow_up_date).slice(0, 10));
+  if (lead._enr && lead._enr.status === "active" && lead._enr.next_touch_date) {
+    days.push(String(lead._enr.next_touch_date).slice(0, 10));
+  }
+  if (!days.length) return null;
+  days.sort();
+  return startOfLocalDay(days[0]);
+}
+
+/**
+ * You already dealt with this one and said when to come back. Until that
+ * moment arrives it is not a call you can make.
+ *
+ * This was the biggest hole in the app. buildQueue filtered out the closed,
+ * the DNC and the booked, then RANKED everything else — it never asked whether
+ * the work was owed yet. So a lead no-answered at 9am got a callback two days
+ * out, scored 70 for "due in 2d" plus a 50-point IEP boost, and came back to
+ * the top of the queue ahead of a never-dialed lead scoring 90. You'd redial
+ * someone you'd just tried, at the same hour, while six thousand untouched
+ * leads sat behind them.
+ *
+ * Excluding these is also what makes the slot rotation in callbackTime.ts
+ * real: booking the retry for Thursday at 5:45pm means nothing if the lead is
+ * offered to you on Thursday at 8am.
+ */
+export function isScheduledForLater(lead: LeadWithBucket, now: Date = new Date()): boolean {
+  const due = nextDueMoment(lead);
+  return due !== null && due.getTime() > now.getTime();
+}
+
+/**
+ * Worked today already. Backstop for the case the rule above can't see: a
+ * disposition that clears the follow-up date, or a lead someone edited by
+ * hand. One conversation a day per person is enough.
+ */
+export function workedToday(lead: LeadWithBucket): boolean {
+  if (!lead.last_contact_date) return false;
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return String(lead.last_contact_date).slice(0, 10) === today;
+}
+
 // A just-arrived, never-worked lead — the speed-to-lead window.
 export function isFresh(lead: LeadWithBucket): boolean {
   if (hasPriorWork(lead) || !lead.created_at) return false;
@@ -216,10 +282,36 @@ export function buildQueue(leads: LeadWithBucket[]): ScoredLead[] {
     // Neither is a past appointment nobody closed out — that's an outcome to
     // record, not a callback you're late on. See awaitingAppointmentOutcome.
     .filter((l) => !awaitingAppointmentOutcome(l))
+    // Nor is a lead you already handled and booked a time to come back to.
+    // See isScheduledForLater — this is what stops this morning's no-answers
+    // reappearing this afternoon.
+    .filter((l) => !isScheduledForLater(l))
+    .filter((l) => !workedToday(l))
     .filter(isDialable)
     .filter((l) => (l.phone || l.phone2))
     .map(scoreLead)
     .sort((a, b) => b._score - a._score);
+}
+
+/**
+ * The leads that WOULD be callable except that you've already handled them.
+ *
+ * A queue that silently shrinks reads as a broken queue, and the first instinct
+ * is to distrust it and go back to the spreadsheet. Saying "38 worked today,
+ * 136 booked for later" turns a missing number into a decision the app made on
+ * your behalf, which you can then go and look at.
+ */
+export function heldBackCounts(leads: LeadWithBucket[]): { worked: number; later: number } {
+  let worked = 0;
+  let later = 0;
+  for (const l of leads) {
+    if (l._bucket === "Closed" || isClosedStatus(l.status) || needsInfo(l)) continue;
+    if (!isDialable(l) || !(l.phone || l.phone2)) continue;
+    if (hasUpcomingAppointment(l) || awaitingAppointmentOutcome(l)) continue;
+    if (workedToday(l)) worked += 1;
+    else if (isScheduledForLater(l)) later += 1;
+  }
+  return { worked, later };
 }
 
 // TCPA safe calling window for consumer calls: 8am to 9pm local time.

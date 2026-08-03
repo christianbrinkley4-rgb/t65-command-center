@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Undo2, Focus, RefreshCw, Download, PlayCircle, UserRoundPlus } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { withinCallingHours } from "@/lib/priority";
+import { heldBackCounts, withinCallingHours } from "@/lib/priority";
 import { buildSegment, findSegment, segmentContext, segmentsFor } from "@/lib/segments";
 import { revertLead, type LeadSnapshot } from "@/lib/dispositions";
 import { leadsToCsv, deftSalesCsv, downloadCsv } from "@/lib/csv";
@@ -57,6 +57,12 @@ export default function PowerListPage() {
   // Dial Session can't drift apart about what a segment means.
   const segCtx = useMemo(() => segmentContext(leads), [leads]);
   const currentSegment = findSegment(seg);
+  // What the queue is deliberately holding back, so a shrinking list reads as
+  // a decision rather than a bug.
+  const held = useMemo(
+    () => heldBackCounts(leads.filter((l) => matchesWho(l, who))),
+    [leads, who]
+  );
   const preValue = useMemo(
     () =>
       buildSegment(seg, leads.filter((l) => matchesWho(l, who)), segCtx).filter(
@@ -134,7 +140,8 @@ export default function PowerListPage() {
           <h1 className="font-display text-2xl font-semibold text-ink">Power List</h1>
           <p className="text-sm text-worked tabular-nums">
             {leadsLoading ? "Loading…" : `${dueCount} due now · ${queue.length.toLocaleString()} to work`}
-            {worked.size > 0 ? ` · ${worked.size} worked this session` : ""}
+            {held.worked > 0 ? ` · ${held.worked} done today` : ""}
+            {held.later > 0 ? ` · ${held.later} booked for later` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">

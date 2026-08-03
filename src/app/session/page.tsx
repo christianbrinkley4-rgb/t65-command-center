@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Phone, PhoneCall, PhoneOff, Play, Voicemail, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { iepPhase, withinCallingHours, scoreLead } from "@/lib/priority";
+import { heldBackCounts, iepPhase, withinCallingHours, scoreLead } from "@/lib/priority";
 import { buildSegment, findSegment, segmentContext, segmentsFor } from "@/lib/segments";
 import {
   applyDisposition,
@@ -124,6 +124,10 @@ export default function SessionPage() {
   const { origin, usingFallback } = useFilterOrigin(filter);
 
   const segCtx = useMemo(() => segmentContext(leads), [leads]);
+  const held = useMemo(
+    () => heldBackCounts(leads.filter((l) => matchesWho(l, who))),
+    [leads, who]
+  );
   const preview = useMemo(
     () =>
       buildSegment(seg, leads.filter((l) => matchesWho(l, who)), segCtx)
@@ -418,6 +422,15 @@ export default function SessionPage() {
           <p className="mt-4 text-sm text-worked">
             <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> leads ready in this session.
           </p>
+          {(held.worked > 0 || held.later > 0) && (
+            <p className="mt-1 text-[11px] leading-relaxed text-later">
+              Held back:{" "}
+              {held.worked > 0 && <>{held.worked} you already worked today</>}
+              {held.worked > 0 && held.later > 0 && " · "}
+              {held.later > 0 && <>{held.later} booked for a later day or hour</>}
+              . They come back on their own, at the time the callback was set for.
+            </p>
+          )}
           <button
             onClick={start}
             disabled={preview.length === 0}

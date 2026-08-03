@@ -42,6 +42,14 @@ type Ctx = {
 
 const AppContext = createContext<Ctx | null>(null);
 
+const WORKED_KEY = "t65-worked-today";
+
+function todayKey(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const { session, loading: authLoading, signIn, signOut } = useAuth();
   const {
@@ -59,17 +67,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   } = useLeads(!!session);
   const [who, setWho] = useState<WhoFilter>("Everyone");
   const [me, setMeState] = useState("Christian");
-  // Leads worked this session — lives in context (not a page) so switching tabs
-  // doesn't resurface the morning's calls into the queue to be re-dialed.
+  // Leads worked TODAY. Lives in context (not a page) so switching tabs doesn't
+  // resurface the morning's calls, and mirrored to localStorage keyed by date so
+  // neither does a browser refresh — which is how you end up redialing someone
+  // at 2pm that you already tried at 9am. The key carries the day, so it empties
+  // itself overnight without any cleanup.
+  //
+  // This is the belt to the braces in priority.ts: a disposition writes a dated
+  // callback and the queue hides the lead on the data, but a tap-to-dial with no
+  // result recorded leaves nothing on the row to hide it by. This remembers it.
   const [worked, setWorked] = useState<Set<string>>(new Set());
-  const markWorked = (id: string) => setWorked((s) => new Set(s).add(id));
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(WORKED_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved && saved.day === todayKey() && Array.isArray(saved.ids)) {
+        setWorked(new Set(saved.ids));
+      } else {
+        localStorage.removeItem(WORKED_KEY);
+      }
+    } catch {
+      /* a corrupt entry just means we start the day empty */
+    }
+  }, []);
+
+  const persistWorked = (next: Set<string>) => {
+    try {
+      localStorage.setItem(WORKED_KEY, JSON.stringify({ day: todayKey(), ids: [...next] }));
+    } catch {
+      /* out of quota — the in-memory set still holds for this session */
+    }
+    return next;
+  };
+
+  const markWorked = (id: string) => setWorked((s) => persistWorked(new Set(s).add(id)));
   const unmarkWorked = (id: string) =>
     setWorked((s) => {
       const n = new Set(s);
       n.delete(id);
-      return n;
+      return persistWorked(n);
     });
-  const clearWorked = () => setWorked(new Set());
+  const clearWorked = () => setWorked(persistWorked(new Set()));
 
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem("t65-cc-me") : null;

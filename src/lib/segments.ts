@@ -21,7 +21,15 @@
 // Getting that backwards is what made the DNC segment come back empty for a
 // while: it was being filtered through the queue that exists to hide it.
 
-import { awaitingAppointmentOutcome, buildQueue, iepPhase, isFresh, scoreLead } from "./priority";
+import {
+  awaitingAppointmentOutcome,
+  buildQueue,
+  iepPhase,
+  isFresh,
+  nextDueMoment,
+  scoreLead,
+  workedToday,
+} from "./priority";
 import { needsInfo } from "./types";
 import { canonicalPhone } from "./phone";
 import type { ScoredLead } from "./priority";
@@ -110,11 +118,29 @@ export const SEGMENTS: Segment[] = [
   {
     key: "followup",
     label: "Follow-ups",
-    source: "queue",
+    source: "book",
+    // Reads the whole book on purpose. The dial queue now hides anything
+    // booked for later, which is right when you're asking "who can I call
+    // now" and wrong when you're asking "what have I promised" — this is the
+    // second question, so it shows the future ones too, soonest first.
     match: (l) =>
       Boolean(l.next_follow_up_date) || (l._actions || []).some((a) => a.status === "pending"),
-    blurb: "A promise you made — a callback date or a planned action. Somebody is expecting to hear from you.",
+    sort: (a, b) => {
+      const at = nextDueMoment(a)?.getTime() ?? Infinity;
+      const bt = nextDueMoment(b)?.getTime() ?? Infinity;
+      return at - bt;
+    },
+    blurb: "Every promise you've made — a callback date or a planned action — soonest first, including the ones not due yet. The dial queue hides those until their hour comes round; this is where you see them.",
     on: ["list", "session"],
+  },
+  {
+    key: "workedtoday",
+    label: "Worked today",
+    source: "book",
+    match: (l) => workedToday(l),
+    sort: (a, b) => String(b.updated_at).localeCompare(String(a.updated_at)),
+    blurb: "Everyone you got a result on today. They're deliberately out of the dial queue until their callback comes round — this is where to check what you did, or fix a misclick.",
+    on: ["list"],
   },
   {
     key: "talked",
