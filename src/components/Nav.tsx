@@ -1,41 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { RefreshCw, LogOut, Menu, X } from "lucide-react";
+import { RefreshCw, LogOut, Menu, X, Search as SearchIcon } from "lucide-react";
 import { useApp } from "@/lib/context";
+import { OPEN_PALETTE } from "@/components/CommandPalette";
+import { TABS, TOOLS } from "@/lib/nav";
 import { WHO_OPTIONS } from "@/lib/types";
 import clsx from "clsx";
 
-// Five things you look at, and a drawer for the rest.
-//
-// Thirteen tabs meant thirteen decisions before any work started, and the
-// usage said only a handful carried it: the nurture engine had zero
-// enrollments and saved views had never been used once. What's left up top is
-// the day, the two ways of working it, the book, and the scoreboard. Nothing
-// was deleted — the tools still exist, they just stopped competing for
-// attention with the work.
-const TABS = [
-  { href: "/calendar/", label: "Day" },
-  { href: "/session/", label: "Dial" },
-  { href: "/knock/", label: "Knock" },
-  { href: "/list/", label: "Leads" },
-  { href: "/stats/", label: "Stats" },
-];
-
-const TOOLS = [
-  { href: "/today/", label: "Today's queue" },
-  { href: "/search/", label: "Search" },
-  { href: "/t65/", label: "T65 Radar" },
-  { href: "/next/", label: "One at a time" },
-  { href: "/import/", label: "Import" },
-  { href: "/assistant/", label: "AI Assistant" },
-  { href: "/templates/", label: "Scripts" },
-  { href: "/new/", label: "Prospecting" },
-  { href: "/sequences/", label: "Sequences" },
-];
-
+// Five things you look at, and a drawer for the rest. The lists live in
+// lib/nav.ts because the command palette has to offer the same destinations.
 const selectClass =
   "rounded-lg border border-night-line bg-white/5 px-2.5 py-1.5 text-sm text-paper outline-none transition hover:bg-white/10 focus:border-brand";
 
@@ -47,6 +23,24 @@ export default function Nav() {
   const [open, setOpen] = useState(false);
 
   const [toolsOpen, setToolsOpen] = useState(false);
+  // Closing on mouse-leave alone means the menu stays open forever on a touch
+  // screen, which is the device this actually runs on.
+  const toolsRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (!toolsRef.current?.contains(e.target as Node)) setToolsOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setToolsOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [toolsOpen]);
 
   const isActive = (href: string) => pathname === href || pathname === href.slice(0, -1);
   const current = [...TABS, ...TOOLS].find((t) => isActive(t.href));
@@ -88,7 +82,7 @@ export default function Nav() {
             </Link>
           ))}
 
-          <div className="relative">
+          <div className="relative" ref={toolsRef}>
             <button
               onClick={() => setToolsOpen((v) => !v)}
               aria-expanded={toolsOpen}
@@ -151,6 +145,20 @@ export default function Nav() {
             I&apos;m Will
           </option>
         </select>
+
+        {/* The palette needs somewhere to be discovered. A keyboard shortcut
+            nobody has been told about is a feature that doesn't exist. */}
+        <button
+          onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE))}
+          aria-label="Search leads and pages"
+          title="Find anyone, or go anywhere (Ctrl+K)"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-night-line px-2.5 py-1.5 text-sm text-night-soft transition hover:bg-white/10 hover:text-paper"
+        >
+          <SearchIcon size={14} aria-hidden />
+          <kbd className="hidden font-sans text-[10px] tracking-wide text-night-soft/70 lg:inline">
+            Ctrl K
+          </kbd>
+        </button>
 
         <button
           onClick={() => reload()}

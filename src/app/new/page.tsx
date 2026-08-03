@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
 import LeadRow from "@/components/LeadRow";
-import EditDrawer from "@/components/EditDrawer";
+import LeadPanel from "@/components/LeadPanel";
 import type { LeadWithBucket } from "@/lib/types";
 
 const PAGE_SIZE = 100;
@@ -95,7 +95,7 @@ export default function NewProspectingPage() {
         </button>
       )}
 
-      <EditDrawer lead={selected} onClose={() => setSelected(null)} />
+      <LeadPanel lead={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }

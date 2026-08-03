@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 import { useApp } from "@/lib/context";
 import { BUCKET_ORDER, BUCKET_LABEL, BUCKET_COLOR, effectiveDueDate, matchesWho } from "@/lib/buckets";
 import BucketSection from "@/components/BucketSection";
-import EditDrawer from "@/components/EditDrawer";
+import LeadPanel from "@/components/LeadPanel";
 import SeasonBanner from "@/components/SeasonBanner";
-import { formatActionDue } from "@/lib/actions";
+import { actionBelongsTo, formatActionDue } from "@/lib/actions";
 import type { LeadWithBucket } from "@/lib/types";
 
 export default function TodayPage() {
@@ -62,7 +62,11 @@ export default function TodayPage() {
       .flatMap((lead) =>
         (lead._actions || [])
           .filter((action) => action.status === "pending")
-          .filter((action) => who === "Everyone" || action.assigned_to === who)
+          // "Either" belongs to whoever is looking. Testing assigned_to === who
+          // made every shared task disappear the moment Will picked his own
+          // name — which is exactly when he needs to see it, since an unassigned
+          // callback is still somebody's job.
+          .filter((action) => who === "Everyone" || actionBelongsTo(action, who))
           .filter((action) => new Date(action.due_at).getTime() <= endOfToday.getTime())
           .map((action) => ({ lead, action }))
       )
@@ -153,7 +157,7 @@ export default function TodayPage() {
         )}
       </div>
 
-      <EditDrawer lead={selected} onClose={() => setSelected(null)} />
+      <LeadPanel lead={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }

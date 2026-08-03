@@ -5,7 +5,7 @@ import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
 import { iepPhase, turning65Date, type IepPhase } from "@/lib/priority";
 import LeadRow from "@/components/LeadRow";
-import EditDrawer from "@/components/EditDrawer";
+import LeadPanel from "@/components/LeadPanel";
 import type { LeadWithBucket } from "@/lib/types";
 
 const GROUPS: { phase: Exclude<IepPhase, null | "outside">; title: string; blurb: string }[] = [
@@ -97,7 +97,7 @@ export default function T65RadarPage() {
         )}
       </div>
 
-      <EditDrawer lead={selected} onClose={() => setSelected(null)} />
+      <LeadPanel lead={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }

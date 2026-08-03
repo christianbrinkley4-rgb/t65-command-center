@@ -149,6 +149,39 @@ export async function cancelPendingLeadActions(leadId: string, reason: string, m
   if (error) throw error;
 }
 
+/**
+ * Cancel every pending action on this lead EXCEPT the ones that were already
+ * there. Used by undo: a disposition schedules its own retry, so reverting the
+ * disposition has to revert the retry too, without touching the callback
+ * somebody planned deliberately last week.
+ */
+export async function cancelActionsCreatedSince(
+  leadId: string,
+  keepIds: string[],
+  reason: string,
+  me: string
+) {
+  const { data, error } = await supabase
+    .from("lead_actions")
+    .select("id")
+    .eq("lead_id", leadId)
+    .eq("status", "pending");
+  if (error) throw error;
+  const keep = new Set(keepIds);
+  const doomed = (data || []).map((r) => r.id as string).filter((id) => !keep.has(id));
+  if (!doomed.length) return;
+  const { error: updateError } = await supabase
+    .from("lead_actions")
+    .update({
+      status: "cancelled",
+      completed_at: new Date().toISOString(),
+      completed_by: me,
+      completion_note: reason,
+    })
+    .in("id", doomed);
+  if (updateError) throw updateError;
+}
+
 export function nextPendingAction(actions: LeadAction[] | undefined) {
   return (actions || []).find((action) => action.status === "pending") || null;
 }

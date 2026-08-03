@@ -18,8 +18,9 @@ import { useApp } from "@/lib/context";
 import { effectiveDueDate, matchesWho } from "@/lib/buckets";
 import { localYmd, todayStr } from "@/lib/sequences";
 import { downloadIcs } from "@/lib/calendar";
-import { buildQueue, turns65Label } from "@/lib/priority";
-import EditDrawer from "@/components/EditDrawer";
+import { buildQueue } from "@/lib/priority";
+import LeadPanel from "@/components/LeadPanel";
+import T65Badge from "@/components/T65Badge";
 import type { LeadWithBucket } from "@/lib/types";
 
 const DAYS_SHOWN = 14;
@@ -302,13 +303,9 @@ export default function CalendarPage() {
               {e.at ? timeOf(new Date(e.at).toISOString()) : e.kind}
             </span>
             <button onClick={() => setDrawerLead(e.lead)} className="min-w-0 flex-1 text-left">
-              <p className="truncate text-sm font-semibold text-ink">
-                {e.lead.name || "Unnamed"}
-                {turns65Label(e.lead.birthday) && (
-                  <span className="ml-1.5 rounded bg-paper px-1 py-0.5 text-[10px] font-medium text-worked">
-                    T65 {turns65Label(e.lead.birthday)}
-                  </span>
-                )}
+              <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-ink">
+                <span className="truncate">{e.lead.name || "Unnamed"}</span>
+                <T65Badge birthday={e.lead.birthday} />
               </p>
               <p className="truncate text-xs text-later">
                 {e.label}
@@ -394,7 +391,7 @@ export default function CalendarPage() {
         </div>
       )}
 
-      <EditDrawer lead={drawerLead} onClose={() => setDrawerLead(null)} />
+      <LeadPanel lead={drawerLead} onClose={() => setDrawerLead(null)} />
     </div>
   );
 }

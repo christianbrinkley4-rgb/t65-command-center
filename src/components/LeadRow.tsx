@@ -2,6 +2,7 @@
 
 import type { LeadWithBucket } from "@/lib/types";
 import { nextPendingAction } from "@/lib/actions";
+import T65Badge from "@/components/T65Badge";
 
 export default function LeadRow({
   lead,
@@ -23,6 +24,7 @@ export default function LeadRow({
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
           <span className="truncate">{lead.name || "Unnamed"}</span>
+          <T65Badge birthday={lead.birthday} />
           {lead._enr && lead._enr.status === "active" && (
             <span className="shrink-0 rounded bg-verify-50 px-1.5 py-0.5 text-[10px] font-semibold text-verify">
               Nurture · step {lead._enr.current_step}

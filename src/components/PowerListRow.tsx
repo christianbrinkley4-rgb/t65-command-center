@@ -15,9 +15,11 @@ import { logActivity, plusDays, todayStr } from "@/lib/sequences";
 import { scheduleFollowUp } from "@/lib/actions";
 import { downloadIcs } from "@/lib/calendar";
 import LeadAddress from "@/components/LeadAddress";
+import T65Badge from "@/components/T65Badge";
 import { listLabel } from "@/lib/categories";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
-import { iepPhase, IEP_LABEL, isFresh, turns65Label, withinCallingHours, type ScoredLead } from "@/lib/priority";
+import { effectiveDueDate } from "@/lib/buckets";
+import { isFresh, withinCallingHours, type ScoredLead } from "@/lib/priority";
 
 // Short labels for the one-tap call results, in the order agents actually use.
 const RESULT_LABEL: Record<string, string> = {
@@ -32,7 +34,11 @@ const RESULT_LABEL: Record<string, string> = {
 };
 
 function dueText(lead: ScoredLead): { text: string; tone: string } {
-  const d = lead.next_follow_up_date || lead._enr?.next_touch_date || null;
+  // The same date the row is SORTED by. Reading only next_follow_up_date and
+  // the sequence touch meant a lead whose soonest commitment was a planned
+  // action ("Call Tuesday 6:15") sat at the top of the list showing "—" in the
+  // Next due column: ranked first, and looking like nothing was owed.
+  const d = effectiveDueDate(lead, lead._enr);
   if (!d) {
     if (lead._bucket === "New") return { text: "never dialed", tone: "text-newlead" };
     return { text: "—", tone: "text-later" };
@@ -69,7 +75,6 @@ export default function PowerListRow({
   const [cbTime, setCbTime] = useState("");
   const [apptDt, setApptDt] = useState("");
 
-  const phase = iepPhase(lead.birthday);
   // A parcel value we can't attribute to this person is worse than none: it
   // sorts and filters as if it were their house.
   // Everything already done to this lead, from any system, in one line.
@@ -204,22 +209,7 @@ export default function PowerListRow({
             {isFresh(lead) && (
               <span className="rounded bg-brand px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">New</span>
             )}
-            {/* Always show the month they turn 65 — most of the book is a year
-                out, and an IEP-only badge leaves those rows unlabeled. */}
-            {turns65Label(lead.birthday) && (
-              <span
-                className={
-                  phase && phase !== "outside" && phase !== "approaching"
-                    ? "rounded bg-brand px-1.5 py-0.5 text-[10px] font-bold text-white"
-                    : phase === "approaching"
-                      ? "rounded bg-brand-light px-1.5 py-0.5 text-[10px] font-semibold text-brand-dark"
-                      : "rounded bg-paper px-1.5 py-0.5 text-[10px] font-semibold text-worked"
-                }
-                title={phase ? IEP_LABEL[phase] : undefined}
-              >
-                T65 {turns65Label(lead.birthday)}
-              </span>
-            )}
+            <T65Badge birthday={lead.birthday} />
             {lead._dupe && (
               <span className="rounded bg-due-50 px-1.5 py-0.5 text-[10px] font-semibold text-due">
                 dupe

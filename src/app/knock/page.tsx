@@ -31,7 +31,7 @@ import { setAppointment } from "@/lib/dispositions";
 import { scheduleFollowUp } from "@/lib/actions";
 import { writeOrQueue } from "@/lib/offline";
 import { logActivity, todayStr } from "@/lib/sequences";
-import { iepPhase, monthsToBirthdayMonth, turns65Label } from "@/lib/priority";
+import { iepPhase, monthsToBirthdayMonth } from "@/lib/priority";
 import {
   planRoute,
   routeMiles,
@@ -42,6 +42,7 @@ import {
   type LatLng,
 } from "@/lib/route";
 import RoutePlanner, { type RoutePlan } from "@/components/RoutePlanner";
+import T65Badge from "@/components/T65Badge";
 import MultiSelect from "@/components/MultiSelect";
 import { birthMonth, MONTH_NAMES, MONTH_UNKNOWN, normalizeSource } from "@/lib/categories";
 import {
@@ -703,7 +704,6 @@ ${prior}` : entry,
   function renderCard(hh: Household, badge?: React.ReactNode) {
     const lead = hh.primary as LeadWithBucket;
     const others = hh.occupants.filter((o) => o.id !== lead.id);
-    const phase = iepPhase(lead.birthday);
     // Occupants share a parcel, so the household's value is the best of them.
     const suspectValue = homeValueSuspect(hh.primary, multiUnit.has(hh.key));
     const hv = doorValue(hh);
@@ -752,23 +752,10 @@ ${prior}` : entry,
                 </span>
               )}
               {/* Always show when they turn 65 — a neighborhood list is mostly
-                  a year out, and the phase badge alone leaves those unlabeled. */}
-              {turns65Label(lead.birthday) && (
-                <span
-                  className={
-                    phase === "hot" || phase === "birthday" || phase === "closing"
-                      ? "rounded-md bg-brand px-1.5 py-0.5 font-semibold text-white"
-                      : phase === "approaching"
-                        ? "rounded-md bg-brand-light px-1.5 py-0.5 font-medium text-brand-dark"
-                        : "rounded-md bg-paper px-1.5 py-0.5 font-medium text-worked"
-                  }
-                >
-                  T65 {turns65Label(lead.birthday)}
-                  {phase === "birthday" ? " · this month" : ""}
-                  {phase === "hot" ? " · window open" : ""}
-                  {phase === "closing" ? " · closing" : ""}
-                </span>
-              )}
+                  a year out, and the phase badge alone leaves those unlabeled.
+                  Verbose at the door: no hover, no time to decode a colour. */}
+              <T65Badge birthday={lead.birthday} verbose />
+
               {anyDnc && (
                 <span className="rounded-md bg-due-50 px-1.5 py-0.5 font-medium text-due">
                   Phone DNC — knock first

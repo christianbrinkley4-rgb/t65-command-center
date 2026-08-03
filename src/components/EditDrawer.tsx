@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { X, Phone, PhoneCall, History, UserRound } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { X, Phone, PhoneCall, History, UserRound, ChevronDown, ChevronRight } from "lucide-react";
 import { useApp } from "@/lib/context";
 import {
   enrollLeads,
@@ -19,8 +19,17 @@ import SmartCapture from "@/components/SmartCapture";
 import { zipOf } from "@/components/LeadAddress";
 import { altPhone } from "@/lib/phone";
 import { listLabel } from "@/lib/categories";
+import { canonicalPhone } from "@/lib/phone";
+import T65Badge from "@/components/T65Badge";
+import LeadIdentityFields, {
+  emptyIdentity,
+  identityChanged,
+  identityFromLead,
+  identityPatch,
+  type LeadIdentity,
+} from "@/components/LeadIdentityFields";
 import { supabase } from "@/lib/supabaseClient";
-import { NEEDS_INFO_STATUS } from "@/lib/types";
+import { needsInfo, NEEDS_INFO_STATUS } from "@/lib/types";
 import type { Activity, LeadWithBucket, Template } from "@/lib/types";
 
 // One chronological feed per lead: activity_log rows (dials, dispositions,
@@ -144,12 +153,13 @@ export default function EditDrawer({
   lead: LeadWithBucket | null;
   onClose: () => void;
 }) {
-  const { updateLead, reload, sequences, steps, me, actionsError } = useApp();
+  const { updateLead, reload, sequences, steps, me, actionsError, leads } = useApp();
   const [status, setStatus] = useState("");
   const [stageBucket, setStageBucket] = useState("");
   const [followUp, setFollowUp] = useState("");
   const [followUpNote, setFollowUpNote] = useState("");
-  const [email, setEmail] = useState("");
+  const [identity, setIdentity] = useState<LeadIdentity>(emptyIdentity);
+  const [showIdentity, setShowIdentity] = useState(false);
   const [appt, setAppt] = useState("");
   const [doNotCall, setDoNotCall] = useState(false);
   const [soaOnFile, setSoaOnFile] = useState(false);
@@ -186,7 +196,10 @@ export default function EditDrawer({
       setStageBucket(lead.stage_bucket || "");
       setFollowUp(lead.next_follow_up_date || "");
       setFollowUpNote(lead.next_follow_up_note || "");
-      setEmail(lead.email || "");
+      setIdentity(identityFromLead(lead));
+      // Open the details automatically on a record somebody flagged as wrong.
+      // That flag IS a request to come here and fix something.
+      setShowIdentity(needsInfo(lead));
       setAppt(lead.appointment_datetime ? toLocalInput(lead.appointment_datetime) : "");
       setDoNotCall(!!lead.do_not_call);
       setSoaOnFile(!!lead.soa_on_file);
@@ -218,6 +231,20 @@ export default function EditDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead]);
 
+  // Every number in the book except this lead's own, so retyping a phone can
+  // warn you before it creates the duplicate somebody has to merge later.
+  const takenPhones = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of leads) {
+      if (lead && l.id === lead.id) continue;
+      const p = canonicalPhone(l.phone);
+      if (p) set.add(p);
+      const p2 = canonicalPhone(l.phone2);
+      if (p2) set.add(p2);
+    }
+    return set;
+  }, [leads, lead]);
+
   if (!lead) return null;
 
   const enr = lead._enr && lead._enr.status === "active" ? lead._enr : null;
@@ -231,11 +258,11 @@ export default function EditDrawer({
     setErr(null);
     try {
       await updateLead(lead.id, {
+        ...identityPatch(identity),
         status: status || null,
         stage_bucket: stageBucket || null,
         next_follow_up_date: followUp || null,
         next_follow_up_note: followUpNote || null,
-        email: email.trim() || null,
         appointment_datetime: appt ? new Date(appt).toISOString() : null,
         do_not_call: doNotCall,
         soa_on_file: soaOnFile,
@@ -257,7 +284,15 @@ export default function EditDrawer({
       if ((lead.next_follow_up_date || "") !== followUp)
         changes.push(`follow-up → ${followUp || "cleared"}`);
       if ((lead.next_follow_up_note || "") !== followUpNote) changes.push("follow-up note updated");
-      if ((lead.email || "") !== email.trim()) changes.push("email updated");
+      // Name it field by field. "details updated" in the timeline is useless
+      // six weeks later when you're trying to work out who changed the phone
+      // number and why the calls stopped connecting.
+      const before = identityFromLead(lead);
+      for (const key of Object.keys(identity) as (keyof LeadIdentity)[]) {
+        if (before[key].trim() !== identity[key].trim()) {
+          changes.push(`${key} → ${identity[key].trim() || "cleared"}`);
+        }
+      }
       if ((lead.assigned_to || "Both") !== assignedTo) changes.push(`assigned → ${assignedTo}`);
       if ((lead.raw_notes || lead.notes || "") !== notes) changes.push("notes updated");
       if (changes.length) {
@@ -418,7 +453,12 @@ export default function EditDrawer({
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
+            <div className="flex flex-wrap items-baseline gap-1.5">
+              <h2 className="text-base font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
+              {/* Same rule as the dialing screens: the month they turn 65 goes
+                  with the name, because there are dial buttons on this panel. */}
+              <T65Badge birthday={lead.birthday} showMissing />
+            </div>
             {/* The list, in the words Christian and Will actually use: "T65
                 March" or "General leads". The raw source string and row number
                 are import plumbing and mean nothing on a live call. */}
@@ -497,6 +537,45 @@ export default function EditDrawer({
               Will don&apos;t work the same person twice.
             </p>
           )}
+
+          {/* The record itself. Collapsed by default because you usually open a
+              lead to work them, not to retype their address — but one tap away,
+              and already open if someone flagged the record as wrong. */}
+          <div className="rounded-xl border border-line">
+            <button
+              type="button"
+              onClick={() => setShowIdentity((v) => !v)}
+              aria-expanded={showIdentity}
+              className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+            >
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+                {showIdentity ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
+                Contact details
+                {identityChanged(identityFromLead(lead), identity) && (
+                  <span className="rounded bg-due-50 px-1.5 py-0.5 text-[10px] font-semibold text-due">
+                    unsaved
+                  </span>
+                )}
+              </span>
+              <span className="text-[11px] text-slate-400">name · phone · DOB · address</span>
+            </button>
+            {showIdentity && (
+              <div className="border-t border-line px-3 py-3">
+                {needsInfo(lead) && (
+                  <p className="mb-3 rounded-lg bg-due-50 px-3 py-2 text-[11px] text-due">
+                    This record was marked wrong info. Correct what&apos;s off, then change the status
+                    below off &ldquo;{NEEDS_INFO_STATUS}&rdquo; and it goes straight back into the call
+                    and knock queues.
+                  </p>
+                )}
+                <LeadIdentityFields
+                  value={identity}
+                  onChange={setIdentity}
+                  takenPhones={takenPhones}
+                />
+              </div>
+            )}
+          </div>
 
           <SmartCapture
             lead={lead}
@@ -775,17 +854,6 @@ export default function EditDrawer({
                 />
               </div>
             )}
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Capture on first real conversation"
-              className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
-            />
           </div>
 
           <div>

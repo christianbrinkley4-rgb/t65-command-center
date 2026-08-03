@@ -1,42 +1,50 @@
 import type { Lead } from "./types";
 import { canonicalPhone } from "./phone";
+import { turns65Label } from "./priority";
 
 function cell(v: unknown): string {
   const s = v === null || v === undefined ? "" : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-const COLUMNS: { key: keyof Lead; label: string }[] = [
-  { key: "oscr_lead_id", label: "OSCR Lead ID" },
-  { key: "oscr_writeback_note", label: "Set in OSCR" },
-  { key: "name", label: "Name" },
-  { key: "phone", label: "Phone" },
-  { key: "phone2", label: "Phone 2" },
-  { key: "email", label: "Email" },
-  { key: "city", label: "City" },
-  { key: "county", label: "County" },
-  { key: "state", label: "State" },
-  { key: "zip", label: "ZIP" },
-  { key: "birthday", label: "Birthday" },
-  { key: "source", label: "Source" },
-  { key: "tier", label: "Tier" },
-  { key: "status", label: "Status" },
-  { key: "stage_bucket", label: "Stage" },
-  { key: "next_follow_up_date", label: "Next Follow-Up" },
-  { key: "assigned_to", label: "Assigned To" },
-  { key: "do_not_call", label: "Do Not Call" },
-  { key: "dials_count", label: "Dials" },
-  { key: "raw_notes", label: "Notes" },
+// Each column knows how to read itself, so a derived column (tags, the T65
+// month) is written the same way as a plain one. The old shape was a list of
+// column KEYS with a special case for "tags" that could never fire, because
+// "tags" wasn't in the list — so every export since tags shipped has quietly
+// dropped the segmentation the whole Power List filters on. Address and the
+// appointment were missing too, which made an exported view useless for
+// planning a drive.
+const COLUMNS: { label: string; get: (l: Lead) => unknown }[] = [
+  { label: "OSCR Lead ID", get: (l) => l.oscr_lead_id },
+  { label: "Set in OSCR", get: (l) => l.oscr_writeback_note },
+  { label: "Name", get: (l) => l.name },
+  { label: "Phone", get: (l) => l.phone },
+  { label: "Phone 2", get: (l) => l.phone2 },
+  { label: "Email", get: (l) => l.email },
+  { label: "Address", get: (l) => l.address },
+  { label: "City", get: (l) => l.city },
+  { label: "County", get: (l) => l.county },
+  { label: "State", get: (l) => l.state },
+  { label: "ZIP", get: (l) => l.zip },
+  { label: "Birthday", get: (l) => l.birthday },
+  { label: "Turns 65", get: (l) => turns65Label(l.birthday) },
+  { label: "Source", get: (l) => l.source },
+  { label: "Tags", get: (l) => (l.tags || []).join("; ") },
+  { label: "Tier", get: (l) => l.tier },
+  { label: "Status", get: (l) => l.status },
+  { label: "Stage", get: (l) => l.stage_bucket },
+  { label: "Next Follow-Up", get: (l) => l.next_follow_up_date },
+  { label: "Appointment", get: (l) => l.appointment_datetime },
+  { label: "Last Contact", get: (l) => l.last_contact_date },
+  { label: "Assigned To", get: (l) => l.assigned_to },
+  { label: "Do Not Call", get: (l) => l.do_not_call },
+  { label: "Dials", get: (l) => l.dials_count },
+  { label: "Notes", get: (l) => l.raw_notes },
 ];
 
 export function leadsToCsv(leads: Lead[]): string {
   const header = COLUMNS.map((c) => c.label).join(",");
-  const rows = leads.map((l) =>
-    COLUMNS.map((c) => {
-      if (c.key === "tags") return cell((l.tags || []).join("; "));
-      return cell(l[c.key]);
-    }).join(",")
-  );
+  const rows = leads.map((l) => COLUMNS.map((c) => cell(c.get(l))).join(","));
   return [header, ...rows].join("\n");
 }
 

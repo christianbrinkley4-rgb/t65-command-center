@@ -1,7 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { effectiveDueDate } from "./buckets";
 import { exitEnrollment, logActivity, logTouch, plusDays, todayStr } from "./sequences";
-import { cancelPendingLeadActions, createLeadActions } from "./actions";
+import { cancelActionsCreatedSince, cancelPendingLeadActions, createLeadActions } from "./actions";
 import { describeCallback, scheduleCallback } from "./callbackTime";
 import { NEEDS_INFO_STAGE, NEEDS_INFO_STATUS } from "./types";
 import type { LeadWithBucket, Sequence, SequenceStep } from "./types";
@@ -205,6 +205,25 @@ export type LeadSnapshot = {
   next_follow_up_date: string | null;
   dials_count: number | null;
   do_not_call: boolean | null;
+  /**
+   * The appointment, which undo used to leave behind.
+   *
+   * Booking someone writes appointment_datetime AND flips the status. Undo
+   * restored the status and nothing else, so the lead came back reading "New"
+   * while still holding a future appointment — and a future appointment takes
+   * a lead out of every dial queue (hasUpcomingAppointment). The lead vanished
+   * silently and showed a meeting nobody had agreed to on the Calendar. A
+   * mistyped date on the datetime picker was enough to lose someone.
+   */
+  appointment_datetime: string | null;
+  /**
+   * Pending actions that existed BEFORE the thing being undone. A disposition
+   * schedules its own callback ("No Answer — retry Thursday 6:15"), so undoing
+   * it has to take that callback with it or the lead keeps a task nobody
+   * planned. Anything pending that isn't in this list was created by the
+   * disposition and gets cancelled.
+   */
+  pendingActionIds: string[];
 };
 
 export function snapshotLead(lead: LeadWithBucket): LeadSnapshot {
@@ -215,6 +234,10 @@ export function snapshotLead(lead: LeadWithBucket): LeadSnapshot {
     next_follow_up_date: lead.next_follow_up_date,
     dials_count: lead.dials_count,
     do_not_call: lead.do_not_call ?? false,
+    appointment_datetime: lead.appointment_datetime ?? null,
+    pendingActionIds: (lead._actions || [])
+      .filter((a) => a.status === "pending")
+      .map((a) => a.id),
   };
 }
 
@@ -227,10 +250,14 @@ export async function revertLead(snap: LeadSnapshot, me: string): Promise<void> 
       next_follow_up_date: snap.next_follow_up_date,
       dials_count: snap.dials_count,
       do_not_call: snap.do_not_call,
+      appointment_datetime: snap.appointment_datetime,
       updated_at: new Date().toISOString(),
     })
     .eq("id", snap.id);
   if (error) throw error;
+  // Best-effort, like every other action write: a lead_actions table that
+  // isn't migrated yet must not turn undo into an error.
+  await cancelActionsCreatedSince(snap.id, snap.pendingActionIds, "Undone", me).catch(() => {});
   await logActivity(snap.id, "Undo", "Reverted last disposition", null, me);
 }
 

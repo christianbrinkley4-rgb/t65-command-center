@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
 import { normalizeSource } from "@/lib/categories";
@@ -515,14 +516,23 @@ export default function StatsPage() {
 
       <div className="mt-4 rounded-xl border border-line bg-white p-4 shadow-card">
         <p className="mb-3 text-sm font-semibold text-ink">Data health</p>
+        {/* Every number that has somewhere to go, goes there. A dashboard that
+            reports 104 duplicates and offers no way to reach them is just a
+            reminder to feel bad. */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.noPhone.toLocaleString()}</p>
             <p className="text-xs text-slate-500">no phone (uncallable)</p>
+            <Link href="/knock/" className="text-[11px] font-medium text-brand hover:underline">
+              Work them as doors
+            </Link>
           </div>
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.noBirthday.toLocaleString()}</p>
             <p className="text-xs text-slate-500">no birthday (off T65 radar)</p>
+            <Link href="/list/?seg=badinfo" className="text-[11px] font-medium text-brand hover:underline">
+              Fix the records
+            </Link>
           </div>
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.noEmail.toLocaleString()}</p>
@@ -531,10 +541,16 @@ export default function StatsPage() {
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.dupes.toLocaleString()}</p>
             <p className="text-xs text-slate-500">duplicate phone</p>
+            <Link href="/list/?seg=dupes" className="text-[11px] font-medium text-brand hover:underline">
+              Merge them
+            </Link>
           </div>
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.dnc.toLocaleString()}</p>
             <p className="text-xs text-slate-500">do-not-call</p>
+            <Link href="/list/?seg=dnc" className="text-[11px] font-medium text-brand hover:underline">
+              Review the list
+            </Link>
           </div>
         </div>
         <p className="mt-3 text-xs text-slate-400">

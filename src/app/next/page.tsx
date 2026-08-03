@@ -5,10 +5,11 @@ import { Phone, PhoneCall, SkipForward, PencilLine, CalendarPlus, DollarSign, Un
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
 import { buildQueue, iepPhase, IEP_LABEL, withinCallingHours } from "@/lib/priority";
+import T65Badge from "@/components/T65Badge";
 import { applyDisposition, DISPOSITIONS, setAppointment, markSold, revertLead, snapshotLead } from "@/lib/dispositions";
 import { logActivity } from "@/lib/sequences";
 import { actionBelongsTo, completeLeadAction, createLeadActions, formatActionDue, nextPendingAction, type ActionDraft } from "@/lib/actions";
-import EditDrawer from "@/components/EditDrawer";
+import LeadPanel from "@/components/LeadPanel";
 import ActionPlanner, { actionInDays } from "@/components/ActionPlanner";
 import SeasonBanner from "@/components/SeasonBanner";
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
@@ -27,6 +28,8 @@ export default function NextUpPage() {
   const { leads, leadsLoading, who, me, sequences, steps, reload, actionsError } = useApp();
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [drawerLead, setDrawerLead] = useState<LeadWithBucket | null>(null);
+  // "Full editor" must open the editor; everything else opens the card.
+  const [drawerMode, setDrawerMode] = useState<"card" | "editor">("card");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAppt, setShowAppt] = useState(false);
@@ -186,6 +189,7 @@ export default function NextUpPage() {
         setShowAppt(true);
       } else if (k === "e") {
         e.preventDefault();
+        setDrawerMode("editor");
         setDrawerLead(lead);
       } else if (k === "x") {
         e.preventDefault();
@@ -241,7 +245,11 @@ export default function NextUpPage() {
         <div className="rounded-2xl border border-line bg-white p-6 shadow-lift">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="font-display text-2xl font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
+              {/* T65 month sits with the name on every screen you dial from. */}
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h2 className="font-display text-2xl font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
+                <T65Badge birthday={lead.birthday} size="md" showMissing />
+              </div>
               <LeadAddress lead={lead} className="mt-1 text-sm" size={14} />
               <p className="mt-0.5 text-sm text-slate-500">
                 {zipOf(lead) ? `ZIP ${zipOf(lead)} · ` : ""}
@@ -414,13 +422,13 @@ export default function NextUpPage() {
           <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setDrawerLead(lead)}
+                onClick={() => { setDrawerMode("card"); setDrawerLead(lead); }}
                 className="flex items-center gap-1.5 text-xs font-medium text-brand-dark hover:text-brand"
               >
                 <Sparkles size={13} /> Capture note
               </button>
               <button
-                onClick={() => setDrawerLead(lead)}
+                onClick={() => { setDrawerMode("editor"); setDrawerLead(lead); }}
                 className="flex items-center gap-1.5 text-xs text-worked hover:text-ink"
               >
                 <PencilLine size={13} /> Full editor
@@ -442,7 +450,7 @@ export default function NextUpPage() {
         </p>
       )}
 
-      <EditDrawer lead={drawerLead} onClose={() => setDrawerLead(null)} />
+      <LeadPanel lead={drawerLead} openTo={drawerMode} onClose={() => setDrawerLead(null)} />
     </div>
   );
 }

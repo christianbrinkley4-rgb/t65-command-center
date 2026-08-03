@@ -171,6 +171,30 @@ export function hasUpcomingAppointment(lead: LeadWithBucket): boolean {
   return !isNaN(when) && when >= Date.now();
 }
 
+/** Statuses that mean the appointment has been accounted for. */
+const APPOINTMENT_RESOLVED = /held|no-?show|sold|closed|cancel/i;
+
+/**
+ * The appointment has been and gone and nobody said what happened.
+ *
+ * Booking someone also writes a follow-up date on the appointment day, so once
+ * that day passes the lead reads as an overdue CALLBACK — Rex Austin sat in the
+ * queue as "44d overdue" when what actually happened is that his 16 June
+ * appointment was never closed out. That's a lie in both directions: it isn't a
+ * call you forgot to make, and burying it among hundreds of overdue callbacks
+ * is how an appointment outcome goes unrecorded for six weeks.
+ *
+ * These leave the dial queue and live in the "Needs outcome" segment and on the
+ * Calendar under the day they were booked, which is where someone will actually
+ * see them. They come back to the queue the moment an outcome is recorded.
+ */
+export function awaitingAppointmentOutcome(lead: LeadWithBucket): boolean {
+  if (!lead.appointment_datetime) return false;
+  const when = new Date(lead.appointment_datetime).getTime();
+  if (isNaN(when) || when >= Date.now()) return false;
+  return !APPOINTMENT_RESOLVED.test(String(lead.status || ""));
+}
+
 // A just-arrived, never-worked lead — the speed-to-lead window.
 export function isFresh(lead: LeadWithBucket): boolean {
   if (hasPriorWork(lead) || !lead.created_at) return false;
@@ -189,6 +213,9 @@ export function buildQueue(leads: LeadWithBucket[]): ScoredLead[] {
     .filter((l) => !needsInfo(l))
     // Booked is not callable. See hasUpcomingAppointment.
     .filter((l) => !hasUpcomingAppointment(l))
+    // Neither is a past appointment nobody closed out — that's an outcome to
+    // record, not a callback you're late on. See awaitingAppointmentOutcome.
+    .filter((l) => !awaitingAppointmentOutcome(l))
     .filter(isDialable)
     .filter((l) => (l.phone || l.phone2))
     .map(scoreLead)

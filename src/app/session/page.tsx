@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Phone, PhoneCall, PhoneOff, Play, Voicemail, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { buildQueue, iepPhase, IEP_LABEL, isFresh, withinCallingHours, scoreLead } from "@/lib/priority";
+import { iepPhase, withinCallingHours, scoreLead } from "@/lib/priority";
+import { buildSegment, findSegment, segmentContext, segmentsFor } from "@/lib/segments";
 import {
   applyDisposition,
   DISPOSITIONS,
@@ -27,6 +28,7 @@ import LeadAddress, { zipOf } from "@/components/LeadAddress";
 import { listLabel } from "@/lib/categories";
 import SmartCapture from "@/components/SmartCapture";
 import CallHistory from "@/components/CallHistory";
+import LeadCardHeader from "@/components/LeadCardHeader";
 import LeadFilters from "@/components/LeadFilters";
 import { emptyFilter, matchesFilter, type LeadFilterState } from "@/lib/leadFilter";
 import { householdKey, multiUnitAddressKeys } from "@/lib/knock";
@@ -34,39 +36,12 @@ import { trustedHomeValue } from "@/lib/homeValue";
 import type { ScoredLead } from "@/lib/priority";
 import type { Template } from "@/lib/types";
 
-const SEGMENTS = [
-  { key: "all", label: "Everything due" },
-  { key: "fresh", label: "Fresh leads" },
-  { key: "overdue", label: "Overdue" },
-  { key: "today", label: "Due today" },
-  { key: "week", label: "This week" },
-  { key: "followup", label: "Follow-ups" },
-  { key: "t65", label: "T65 hot window" },
-  { key: "new", label: "Never dialed" },
-  { key: "talked", label: "Talked before" },
-] as const;
-type SegKey = (typeof SEGMENTS)[number]["key"];
+// Same definitions the Power List works from — see lib/segments.ts. The Dial
+// Session only offers the callable piles, because you can't power-dial a list
+// of Do-Not-Call numbers or records nobody has fixed yet.
+const SEGMENTS = segmentsFor("session");
 
 const HOTKEY: Record<string, string> = { na: "1", vm: "2", int: "3", nr: "4", ni: "5", bad: "6", dnc: "7", info: "8" };
-
-function inSeg(l: ScoredLead, seg: SegKey): boolean {
-  switch (seg) {
-    case "fresh": return isFresh(l);
-    case "overdue": return l._bucket === "Overdue";
-    case "today": return l._bucket === "DueToday";
-    case "week": return l._bucket === "ThisWeek";
-    // A promise you made: a callback date or a planned action, either way
-    // somebody is expecting to hear from you.
-    case "followup":
-      return Boolean(l.next_follow_up_date) || (l._actions || []).some((a) => a.status === "pending");
-    // Someone picked up before. Warmer than a cold list and a different pitch.
-    case "talked":
-      return /talked|contacted|interested|not ready|callback/i.test(String(l.status || ""));
-    case "new": return l._bucket === "New";
-    case "t65": { const p = iepPhase(l.birthday); return p === "hot" || p === "birthday" || p === "closing"; }
-    default: return true;
-  }
-}
 
 function fmtElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -77,7 +52,7 @@ function fmtElapsed(ms: number): string {
 export default function SessionPage() {
   const { leads, who, me, sequences, steps, reload, worked, markWorked, unmarkWorked } = useApp();
 
-  const [seg, setSeg] = useState<SegKey>("all");
+  const [seg, setSeg] = useState<string>("all");
   const [filter, setFilter] = useState<LeadFilterState>({ ...emptyFilter });
   const [started, setStarted] = useState(false);
   const [ids, setIds] = useState<string[]>([]);
@@ -148,12 +123,15 @@ export default function SessionPage() {
 
   const { origin, usingFallback } = useFilterOrigin(filter);
 
-  const preview = useMemo(() => {
-    let q = buildQueue(leads.filter((l) => matchesWho(l, who))).filter((l) => !worked.has(l.id));
-    if (seg !== "all") q = q.filter((l) => inSeg(l, seg));
-    return q.filter((l) => matchesFilter(l, filter, multiUnit.has(householdKey(l)), origin));
+  const segCtx = useMemo(() => segmentContext(leads), [leads]);
+  const preview = useMemo(
+    () =>
+      buildSegment(seg, leads.filter((l) => matchesWho(l, who)), segCtx)
+        .filter((l) => !worked.has(l.id))
+        .filter((l) => matchesFilter(l, filter, multiUnit.has(householdKey(l)), origin)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leads, who, worked, seg, filter, multiUnit, origin]);
+    [leads, who, worked, seg, filter, multiUnit, origin, segCtx]
+  );
 
   const lead = useMemo<ScoredLead | null>(() => {
     if (!started) return null;
@@ -225,9 +203,14 @@ export default function SessionPage() {
     if (!lead || !apptDt || busy) return;
     setBusy(true);
     try {
+      // Snapshot BEFORE the write, like every other outcome here. Taking it
+      // afterwards only worked because setAppointment doesn't reload, which is
+      // the kind of thing that stops being true one refactor later.
+      const snap = snapshotLead(lead);
+      const id = lead.id;
       await setAppointment(lead, apptDt, me);
       setCounts((c) => ({ ...c, dials: c.dials + 1, contacts: c.contacts + 1, appts: c.appts + 1 }));
-      const id = lead.id; setLastUndo({ snap: snapshotLead(lead), name: lead.name || "lead", id });
+      setLastUndo({ snap, name: lead.name || "lead", id });
       advance(id);
     } finally { setBusy(false); }
   }
@@ -398,6 +381,7 @@ export default function SessionPage() {
               </button>
             ))}
           </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-later">{findSegment(seg).blurb}</p>
 
           <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-worked">
             Narrow it down
@@ -480,7 +464,6 @@ export default function SessionPage() {
   }
 
   // ---- Active session ----
-  const phase = lead ? iepPhase(lead.birthday) : null;
   const filledScript =
     activeTemplate && lead
       ? fillTemplate(activeTemplate.body, { first: (lead.name || "").split(" ")[0] || "there", name: lead.name || "", me, city: lead.city || "" })
@@ -553,28 +536,7 @@ export default function SessionPage() {
 
       {lead && (
         <div className="rounded-2xl border border-line bg-white p-6 shadow-lift">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="font-display text-3xl font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
-              {/* Address up top: you need it before you talk, not after. */}
-              <LeadAddress lead={lead} className="mt-1 text-sm" size={14} />
-              <p className="mt-0.5 text-sm text-worked">
-                {zipOf(lead) ? `ZIP ${zipOf(lead)} · ` : ""}
-                {listLabel(lead.source)}
-                {lead.tier ? ` · Tier ${lead.tier}` : ""}
-                {trustedHomeValue(lead) ? ` · $${Math.round(Number(trustedHomeValue(lead)) / 1000)}k home` : ""}
-                {/* How far you'd be driving if this call books. Worth knowing
-                    before you offer a time, not after. */}
-                {milesFrom(lead, OFFICE) !== null
-                  ? ` · ${distanceLabel(milesFrom(lead, OFFICE))} out`
-                  : ""}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              {isFresh(lead) && <span className="rounded bg-brand px-2 py-0.5 text-[11px] font-bold uppercase text-white">New</span>}
-              {phase && phase !== "outside" && <span className="rounded bg-newlead px-2 py-0.5 text-[11px] font-semibold text-white">{IEP_LABEL[phase]}</span>}
-            </div>
-          </div>
+          <LeadCardHeader lead={lead} size="lg" />
 
           <p className="mt-2 text-xs text-later">Why now: {(lead._why || []).join(" · ") || "next in line"}</p>
 

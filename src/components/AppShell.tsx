@@ -5,6 +5,7 @@ import { CloudOff, RefreshCw } from "lucide-react";
 import { AppProvider, useApp } from "@/lib/context";
 import LoginScreen from "@/components/LoginScreen";
 import Nav from "@/components/Nav";
+import CommandPalette from "@/components/CommandPalette";
 import { flushQueue, onQueueChange, queueLength, startQueueAutoFlush } from "@/lib/offline";
 
 /**
@@ -89,6 +90,9 @@ function Gate({ children }: { children: React.ReactNode }) {
       <Nav />
       <ConnectionBar />
       <main className="mx-auto max-w-6xl animate-fade-in px-4 py-7">{children}</main>
+      {/* Lives here rather than on a page so ⌘K reaches the book from
+          anywhere — including mid-dial, which is the only time it matters. */}
+      <CommandPalette />
     </div>
   );
 }

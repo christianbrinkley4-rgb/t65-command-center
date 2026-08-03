@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Search, UserRoundPlus } from "lucide-react";
 import { useApp } from "@/lib/context";
 import LeadRow from "@/components/LeadRow";
-import EditDrawer from "@/components/EditDrawer";
-import type { LeadWithBucket } from "@/lib/types";
+import LeadPanel from "@/components/LeadPanel";
+import NewLeadDialog from "@/components/NewLeadDialog";
 
 function normalizePhone(s: string) {
   return s.replace(/\D/g, "");
@@ -14,7 +14,12 @@ function normalizePhone(s: string) {
 export default function SearchPage() {
   const { leads, leadsLoading } = useApp();
   const [q, setQ] = useState("");
-  const [selected, setSelected] = useState<LeadWithBucket | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  // Hold the id, not the row. Logging a result reloads the book, and a captured
+  // object would keep showing the status and history from before the call.
+  const selected = selectedId ? leads.find((l) => l.id === selectedId) || null : null;
 
   const results = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -56,10 +61,20 @@ export default function SearchPage() {
       {!leadsLoading && q.trim() && (
         <div className="overflow-hidden rounded-xl border border-line bg-white shadow-card">
           {results.map((l) => (
-            <LeadRow key={l.id} lead={l} onClick={() => setSelected(l)} showAddress />
+            <LeadRow key={l.id} lead={l} onClick={() => setSelectedId(l.id)} showAddress />
           ))}
           {results.length === 0 && (
-            <p className="p-8 text-center text-sm text-slate-400">No matches for &quot;{q}&quot;.</p>
+            <div className="p-8 text-center">
+              <p className="text-sm text-slate-400">No matches for &quot;{q}&quot;.</p>
+              {/* Searching for someone who isn't in the book is exactly the
+                  moment you want to put them in it. */}
+              <button
+                onClick={() => setAdding(true)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3.5 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
+              >
+                <UserRoundPlus size={15} aria-hidden /> Add them as a lead
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -70,7 +85,17 @@ export default function SearchPage() {
         </p>
       )}
 
-      <EditDrawer lead={selected} onClose={() => setSelected(null)} />
+      {/* Same panel as everywhere else: the card first, editor behind it. */}
+      <LeadPanel lead={selected} onClose={() => setSelectedId(null)} />
+
+      {adding && (
+        <NewLeadDialog
+          onClose={() => setAdding(false)}
+          onCreated={(existing) => {
+            if (existing) setSelectedId(existing.id);
+          }}
+        />
+      )}
     </div>
   );
 }
