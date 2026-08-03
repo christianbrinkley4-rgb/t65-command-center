@@ -9,6 +9,8 @@ import { supabase } from "@/lib/supabaseClient";
 import StatCard from "@/components/StatCard";
 import BarList from "@/components/BarList";
 import Donut from "@/components/Donut";
+import ActivityStats from "@/components/ActivityStats";
+import { isDial, isReached } from "@/lib/callOutcomes";
 import type { Activity } from "@/lib/types";
 
 const SOURCE_ORDER = [
@@ -115,26 +117,15 @@ export default function StatsPage() {
 
   const scoped = useMemo(() => leads.filter((l) => matchesWho(l, who)), [leads, who]);
 
-  const activityStats = useMemo(() => {
+  // Just the goal bar's numerator now — the per-person detail moved into
+  // <ActivityStats/>, which can slice it by hour, day and period.
+  const callsTodayTotal = useMemo(() => {
     const todayStr = new Date().toDateString();
-    const people = ["Christian", "Will"] as const;
-    // Count logged call results, not raw tap-to-dials, so one call isn't
-    // double-counted (a Power List call logs a "Dial" tap AND a result).
-    const calls = recentActivity.filter((a) => a.activity_type === "Call" && a.outcome !== "Dial");
-    const touches = recentActivity.filter((a) => a.activity_type === "Sequence Touch");
-    const count = (list: Activity[], person: string, todayOnly: boolean) =>
-      list.filter(
-        (a) =>
-          (a.logged_by || "") === person &&
-          (!todayOnly || new Date(a.activity_date || 0).toDateString() === todayStr)
-      ).length;
-    return people.map((p) => ({
-      person: p,
-      callsToday: count(calls, p, true),
-      calls7d: count(calls, p, false),
-      touchesToday: count(touches, p, true),
-      touches7d: count(touches, p, false),
-    }));
+    return recentActivity.filter(
+      (a) =>
+        isDial(a.activity_type, a.outcome) &&
+        new Date(a.activity_date || 0).toDateString() === todayStr
+    ).length;
   }, [recentActivity]);
 
 
@@ -229,11 +220,15 @@ export default function StatsPage() {
   }, [knockLog]);
 
   // Same shape for dialing so the two channels can be compared honestly.
+  // startsWith("Talked") used to be the test here, which caught the eight rows
+  // saying "Talked - Interested" and missed the thirty-nine saying "Answered -
+  // Spoke to Prospect" — so the phone looked far worse than the door for
+  // reasons that were entirely about spelling. See lib/callOutcomes.
   const dialCompare = useMemo(() => {
-    const dials = recentActivity.filter((a) => a.activity_type === "Call" && a.outcome);
+    const dials = recentActivity.filter((a) => isDial(a.activity_type, a.outcome));
     const total = dials.length;
-    const talked = dials.filter((a) => (a.outcome || "").startsWith("Talked")).length;
-    return { total, contactRate: total ? Math.round((talked / total) * 100) : null };
+    const reached = dials.filter((a) => isReached(a.outcome)).length;
+    return { total, contactRate: total ? Math.round((reached / total) * 100) : null };
   }, [recentActivity]);
 
   const funnel = useMemo(() => {
@@ -287,8 +282,6 @@ export default function StatsPage() {
     return { noPhone, noBirthday, noEmail, dupes, dnc };
   }, [scoped]);
 
-  const callsTodayTotal = activityStats.reduce((s, a) => s + a.callsToday, 0);
-
   return (
     <div>
       <div className="mb-5 flex items-baseline justify-between">
@@ -321,19 +314,8 @@ export default function StatsPage() {
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {activityStats.map((s) => (
-          <div key={s.person} className="rounded-xl border border-line bg-white p-4 shadow-card">
-            <p className="text-sm font-semibold text-ink">{s.person}</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Today: {s.callsToday} calls · {s.touchesToday} sequence touches
-            </p>
-            <p className="text-xs text-slate-500">
-              Last 7 days: {s.calls7d} calls · {s.touches7d} sequence touches
-            </p>
-          </div>
-        ))}
-      </div>
+      {/* Who did what, when it worked, and whether it's holding up. */}
+      <ActivityStats />
 
       {callSummary.total > 0 ? (
         <div className="mb-4 rounded-xl border border-line bg-white p-4 shadow-card">
