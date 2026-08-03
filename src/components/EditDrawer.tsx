@@ -188,7 +188,7 @@ export default function EditDrawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lead]);
+  }, [lead?.id]);
 
   useEffect(() => {
     if (lead) {
@@ -228,8 +228,16 @@ export default function EditDrawer({
         .then(({ data }) => setCalls((data || []).map(callToTimeline)));
       if (templates.length === 0) fetchTemplates().then(setTemplates).catch(() => {});
     }
+    // Keyed on the ID, never the object.
+    //
+    // LeadPanel re-resolves the lead from the live book on every render, so
+    // `lead` is a NEW object every time the book reloads — and the book
+    // reloads on a 1.5s debounce whenever either agent touches any lead, via
+    // the realtime channel. Depending on the object meant this effect refired
+    // and reset every field: Will typing a note in the drawer would have it
+    // wiped the moment Christian logged a call on someone else entirely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lead]);
+  }, [lead?.id]);
 
   // Every number in the book except this lead's own, so retyping a phone can
   // warn you before it creates the duplicate somebody has to merge later.

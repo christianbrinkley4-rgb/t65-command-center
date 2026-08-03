@@ -14,7 +14,7 @@
 // live book as you type, and if it matches an existing lead this offers to open
 // THAT lead instead of making a second one.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { UserRoundPlus, X } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { supabase } from "@/lib/supabaseClient";
@@ -41,6 +41,17 @@ export default function NewLeadDialog({
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Window-level, not on the dialog div: after a click on any non-focusable
+  // part of the panel, focus sits on the body and a local handler never hears
+  // the key. Same rule as the lead card and the editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const takenPhones = useMemo(() => {
     const set = new Set<string>();

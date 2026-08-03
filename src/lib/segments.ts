@@ -170,7 +170,7 @@ export const SEGMENTS: Segment[] = [
       const p = canonicalPhone(l.phone);
       return Boolean(p) && ctx.duplicatePhones.has(p);
     },
-    blurb: "Two rows, one person — the same number arriving on two lists. Merge them so the history lands in one place and you don't dial someone Will burned yesterday.",
+    blurb: "Numbers that more than one row answers to. Two rows for one person get a merge button; a couple sharing a landline is listed separately and deliberately can't be merged, because they're two people with two enrollment windows.",
     on: ["list"],
   },
   {

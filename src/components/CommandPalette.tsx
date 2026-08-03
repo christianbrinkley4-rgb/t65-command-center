@@ -25,12 +25,11 @@ import { Search, CornerDownLeft, Command, UserRoundPlus } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { ALL_NAV } from "@/lib/nav";
 import { canonicalPhone } from "@/lib/phone";
-import { scoreLead } from "@/lib/priority";
 import { effectiveDueDate } from "@/lib/buckets";
 import T65Badge from "@/components/T65Badge";
 import LeadPanel from "@/components/LeadPanel";
 import NewLeadDialog from "@/components/NewLeadDialog";
-import type { LeadWithBucket } from "@/lib/types";
+import type { LeadWithBucket, UiBucket } from "@/lib/types";
 
 type Row =
   | { kind: "lead"; id: string; lead: LeadWithBucket; rank: number }
@@ -41,6 +40,19 @@ const MAX_LEADS = 8;
 
 /** Anything can ask for the palette: window.dispatchEvent(new Event(OPEN_PALETTE)). */
 export const OPEN_PALETTE = "t65:open-palette";
+
+/** How late the work is, for breaking ties between equally good name matches. */
+const URGENCY: Record<UiBucket, number> = {
+  Overdue: 6,
+  DueToday: 5,
+  ThisWeek: 4,
+  Verify: 3,
+  ThisMonth: 2,
+  New: 1,
+  Later: 0,
+  Worked: 0,
+  Closed: -1,
+};
 
 function dueSummary(lead: LeadWithBucket): string {
   if (lead.appointment_datetime) {
@@ -76,7 +88,12 @@ export default function CommandPalette() {
         setOpen((v) => !v);
         setQ("");
         setCursor(0);
+        return;
       }
+      // Escape at the window, not just on the input. The input handler covers
+      // the normal case because it's autofocused, but anything that moves focus
+      // — clicking a row, a stray tab — left the only way out being the mouse.
+      if (e.key === "Escape") setOpen(false);
     }
     // The header's search button fires this, so the palette stays the only
     // thing that knows how to open itself.
@@ -99,7 +116,13 @@ export default function CommandPalette() {
 
   const rows = useMemo<Row[]>(() => {
     const query = q.trim().toLowerCase();
-    const digits = canonicalPhone(q);
+    // Only treat this as a phone search when the query is ONLY the things a
+    // phone number is made of. Keying off "has four or more digits" meant
+    // typing a house number — "1729 Neelley" — went hunting for phones
+    // containing 1729 and ranked those above the address that actually
+    // matched, which is the one search where you already know the answer.
+    const looksLikeAPhone = /^[\d\s().+-]+$/.test(q.trim());
+    const digits = looksLikeAPhone ? canonicalPhone(q) : "";
 
     const navRows: Row[] = ALL_NAV.filter(
       (n) => !query || n.label.toLowerCase().includes(query) || n.hint.toLowerCase().includes(query)
@@ -146,7 +169,12 @@ export default function CommandPalette() {
     leadRows.sort((a, b) => {
       if (a.kind !== "lead" || b.kind !== "lead") return 0;
       if (a.rank !== b.rank) return b.rank - a.rank;
-      return scoreLead(b.lead)._score - scoreLead(a.lead)._score;
+      // Ties break on how late the work is, so of two Bill Hartleys you get
+      // the one who's actually due. This reads the bucket already computed at
+      // load rather than calling the priority scorer: a one-letter query can
+      // match several hundred leads, and scoring all of them inside a
+      // comparator would run the scorer thousands of times per keystroke.
+      return URGENCY[b.lead._bucket] - URGENCY[a.lead._bucket];
     });
 
     return [...leadRows.slice(0, MAX_LEADS), ...navRows, ...actionRows];

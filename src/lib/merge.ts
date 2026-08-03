@@ -26,23 +26,106 @@
 
 import { supabase } from "./supabaseClient";
 import { logActivity, todayStr } from "./sequences";
-import { mergeTags } from "./categories";
+import { listTag, mergeTags } from "./categories";
 import { canonicalPhone, samePhone } from "./phone";
 import { MERGED_STATUS } from "./types";
 import type { Lead, LeadWithBucket } from "./types";
 
-/** Group leads that answer to the same 10-digit number. */
-export function duplicateGroups(leads: LeadWithBucket[]): LeadWithBucket[][] {
+/**
+ * A shared phone number is NOT a duplicate.
+ *
+ * This is the single most dangerous assumption in the whole feature, and the
+ * live book proves it: Randall Cox and Kimberly Cox share 336-342-2410 and
+ * 205 Glencoe Church Loop. So do Karen and Peter Resh, Kelly and Michaela
+ * Smith, Amy and Theodore Mead. They are married couples on one landline — two
+ * people, two birthdays, two separate enrollment windows (Randall turns 65 in
+ * March 2027, Kimberly in May). Merging them would delete a real lead and take
+ * their T65 date with it.
+ *
+ * The old `_dupe` chip had the same false positives, but it only ever WARNED.
+ * A merge button acts, so it has to be much more certain than a chip.
+ *
+ * The test is deliberately strict, because the two mistakes are not
+ * symmetrical: a missed duplicate stays visible in the households list below
+ * and can be merged next week, while a wrongly merged couple is gone. So
+ * nicknames are not accepted ("Kim" and "Kimberly" stay separate, and so do
+ * "Jo" and "Joseph", who are a couple), and neither are bare initials.
+ *
+ * The surname rule earned its exception from the data. Requiring last names to
+ * match found nothing at all in a book of 43 shared numbers — because all three
+ * real duplicates in it are name changes: Deborah Chamberlain and Deborah
+ * Eddins at 6835 Harry Ct, Lou Franklin and Lou Hood at 301 Windsor Manor Way,
+ * Mary Degraffenridt and Mary Ward. Each pair shares a phone AND an exact date
+ * of birth, which is what makes a differing surname read as a maiden name
+ * rather than a second person: one household does not contain two people with
+ * the same first name born on the same day.
+ */
+function looksLikeSamePerson(a: LeadWithBucket, b: LeadWithBucket): boolean {
+  const dobA = a.birthday ? String(a.birthday).slice(0, 10) : "";
+  const dobB = b.birthday ? String(b.birthday).slice(0, 10) : "";
+  // Two different dates of birth is two different people, whatever the names
+  // say. This is the rule that keeps every couple apart on its own.
+  if (dobA && dobB && dobA !== dobB) return false;
+  const sameDob = Boolean(dobA) && dobA === dobB;
+
+  const parts = (l: LeadWithBucket) =>
+    String(l.name || "")
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+  const na = parts(a);
+  const nb = parts(b);
+
+  // A row with no name at all, on a number that already belongs to someone, is
+  // an import fragment rather than a second person.
+  if (na.length === 0 || nb.length === 0) return true;
+
+  const firstA = na[0];
+  const firstB = nb[0];
+  const lastA = na.length > 1 ? na[na.length - 1] : "";
+  const lastB = nb.length > 1 ? nb[nb.length - 1] : "";
+
+  // The load-bearing guard. Randall and Kimberly Cox never get past this.
+  if (firstA !== firstB) return false;
+  // Different surnames need the date of birth to vouch for them.
+  if (lastA && lastB && lastA !== lastB) return sameDob;
+  return true;
+}
+
+/** Every set of leads answering to one 10-digit number, largest first. */
+function groupByPhone(leads: LeadWithBucket[]): LeadWithBucket[][] {
   const byPhone = new Map<string, LeadWithBucket[]>();
   for (const l of leads) {
     const p = canonicalPhone(l.phone);
     if (p.length !== 10) continue;
     byPhone.set(p, [...(byPhone.get(p) || []), l]);
   }
-  return Array.from(byPhone.values())
-    .filter((group) => group.length > 1)
-    .map((group) => [...group].sort(rankSurvivorFirst))
-    .sort((a, b) => b.length - a.length);
+  return Array.from(byPhone.values()).filter((group) => group.length > 1);
+}
+
+export type PhoneGroups = {
+  /** Same number AND the same person. Safe to merge. */
+  duplicates: LeadWithBucket[][];
+  /** Same number, different people — a household. Never merge these. */
+  households: LeadWithBucket[][];
+};
+
+export function duplicateGroups(leads: LeadWithBucket[]): PhoneGroups {
+  const duplicates: LeadWithBucket[][] = [];
+  const households: LeadWithBucket[][] = [];
+
+  for (const group of groupByPhone(leads)) {
+    const sorted = [...group].sort(rankSurvivorFirst);
+    // Every member has to look like the same person as the best record. One
+    // stranger in the group makes the whole group a household, because merging
+    // "all of these" is the button on offer.
+    const same = sorted.every((l) => l.id === sorted[0].id || looksLikeSamePerson(sorted[0], l));
+    (same ? duplicates : households).push(sorted);
+  }
+
+  const bySize = (a: LeadWithBucket[], b: LeadWithBucket[]) => b.length - a.length;
+  return { duplicates: duplicates.sort(bySize), households: households.sort(bySize) };
 }
 
 /**
@@ -61,6 +144,38 @@ function rankSurvivorFirst(a: LeadWithBucket, b: LeadWithBucket): number {
   if (filled(a) !== filled(b)) return filled(b) - filled(a);
   return String(a.created_at || "").localeCompare(String(b.created_at || ""));
 }
+
+/**
+ * Columns the app derives for itself. A disagreement in one of these is not a
+ * decision anybody makes — the survivor's address already tells you why its
+ * coordinates and parcel value differ, and printing six more lines about
+ * latitude and geocoded_at buries the one line that matters. Blanks still fill
+ * from the other row; only the reporting is suppressed.
+ *
+ * oscr_lead_id is deliberately NOT in here: two OSCR links means the merge
+ * drops one, and that is worth saying out loud.
+ */
+const QUIET_CONFLICTS = new Set<keyof Lead>([
+  "latitude", "longitude", "geocoded_at", "state",
+  "home_value", "home_value_source", "home_value_checked_at",
+  "home_owner_occupied", "home_property_type",
+  "oscr_lead_source", "oscr_status", "oscr_latest_disp", "oscr_last_disp_date",
+  "oscr_score", "oscr_owner",
+]);
+
+/** Column names read like a schema. This is a safety dialog, so use English. */
+const FIELD_LABEL: Partial<Record<keyof Lead, string>> = {
+  name: "name",
+  birthday: "date of birth",
+  lead_profile: "what they told SmartAsset",
+  oscr_lead_id: "OSCR record",
+  zip: "ZIP",
+  county: "county",
+  tier: "tier",
+};
+
+const label = (key: keyof Lead): string =>
+  FIELD_LABEL[key] || String(key).replace(/_/g, " ");
 
 const firstOf = <T,>(...vals: (T | null | undefined)[]): T | null =>
   vals.find((v) => v !== null && v !== undefined && v !== "") ?? null;
@@ -104,9 +219,16 @@ export function previewMerge(survivor: Lead, loser: Lead): { patch: Partial<Lead
     const haveTheirs = theirs !== null && theirs !== undefined && theirs !== "";
     if (missing && haveTheirs) {
       (patch as Record<string, unknown>)[key] = theirs;
-      kept.push(`${key} from the other row`);
-    } else if (!missing && haveTheirs && String(mine) !== String(theirs)) {
-      conflicts.push(`${key}: keeping "${mine}", the other row said "${theirs}"`);
+      // Timestamps are bookkeeping. "takes its geocoded_at from the other row"
+      // is not a thing anyone needs to be told.
+      if (!String(key).endsWith("_at")) kept.push(`${label(key)} from the other row`);
+    } else if (
+      !missing &&
+      haveTheirs &&
+      String(mine) !== String(theirs) &&
+      !QUIET_CONFLICTS.has(key)
+    ) {
+      conflicts.push(`${label(key)}: keeping "${mine}", the other row said "${theirs}"`);
     }
   }
 
@@ -125,22 +247,42 @@ export function previewMerge(survivor: Lead, loser: Lead): { patch: Partial<Lead
   patch.soa_date = firstOf(survivor.soa_date, loser.soa_date);
   if (loser.do_not_call && !survivor.do_not_call) kept.push("do-not-call flag from the other row");
 
-  // Consent is the opposite: it only ever narrows, because you cannot inherit
-  // permission from a record that might be a different person's sign-up.
-  patch.callable = survivor.callable === false || loser.callable === false ? false : survivor.callable;
-  patch.sms_consent = Boolean(survivor.sms_consent && loser.sms_consent);
-  patch.email_consent = Boolean(survivor.email_consent && loser.email_consent);
+  // Consent goes the other way: an explicit NO on either row wins, and
+  // otherwise you take whatever is actually known.
+  //
+  // These columns are nullable, and null means "nobody ever asked" — not "they
+  // said no". AND-ing them would turn silence into a denial, so merging a
+  // SmartAsset lead who really did opt in with a tracker row that has no
+  // consent column at all would quietly revoke a permission you legitimately
+  // hold. Only a recorded `false` may take consent away.
+  const noWorse = (a: boolean | null, b: boolean | null): boolean | null =>
+    a === false || b === false ? false : a ?? b;
+  patch.callable = noWorse(survivor.callable, loser.callable);
+  patch.sms_consent = noWorse(survivor.sms_consent, loser.sms_consent);
+  patch.email_consent = noWorse(survivor.email_consent, loser.email_consent);
 
   // The soonest commitment wins — you keep the earlier promise.
   patch.next_follow_up_date = earliest(survivor.next_follow_up_date, loser.next_follow_up_date);
   patch.appointment_datetime = firstOf(survivor.appointment_datetime, loser.appointment_datetime);
   if (!survivor.appointment_datetime && loser.appointment_datetime) {
     kept.push("appointment from the other row");
+  } else if (
+    survivor.appointment_datetime &&
+    loser.appointment_datetime &&
+    survivor.appointment_datetime !== loser.appointment_datetime
+  ) {
+    // Two booked appointments for one person is a real thing to know about,
+    // and dropping one silently is how somebody gets stood up.
+    conflicts.push(
+      `appointment: keeping ${new Date(survivor.appointment_datetime).toLocaleString()}, the other row was booked for ${new Date(loser.appointment_datetime).toLocaleString()}`
+    );
   }
 
+  // listTag(), not a hand-rolled slug — the whole point of that helper is that
+  // the same list name always produces the same tag.
   patch.tags = mergeTags(survivor.tags, [
     ...(loser.tags || []),
-    ...(loser.source && loser.source !== survivor.source ? [`list:${String(loser.source).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`] : []),
+    ...(loser.source && loser.source !== survivor.source ? [listTag(loser.source)] : []),
   ]);
 
   // Both note blobs, both labelled. Anything the loop above refused to
@@ -167,7 +309,26 @@ export async function mergeLeads(
   me: string
 ): Promise<void> {
   if (survivor.id === loser.id) throw new Error("A lead can't be merged into itself.");
-  const { patch, kept } = previewMerge(survivor, loser);
+
+  // Read the survivor back before computing anything.
+  //
+  // The caller holds whatever row it was rendering, which is stale in two ways
+  // that both lose data. Folding three rows into one runs this twice, and the
+  // second pass built its patch from the ORIGINAL survivor — so
+  // dials_count came out as original + third, silently dropping the second
+  // row's dials, and raw_notes overwrote the first merge's audit trail. The
+  // other way is two people merging different duplicates of the same person at
+  // the same desk. Both are fixed by reading the current row here rather than
+  // trusting the copy in the browser.
+  const { data: fresh, error: readError } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", survivor.id)
+    .single();
+  if (readError) throw readError;
+  const current = { ...survivor, ...(fresh as Lead) };
+
+  const { patch, kept } = previewMerge(current, loser);
 
   const { error: updateError } = await supabase
     .from("leads")
@@ -191,7 +352,7 @@ export async function mergeLeads(
       stage_bucket: "Closed",
       next_follow_up_date: null,
       appointment_datetime: null,
-      raw_notes: `[${todayStr()} merged by ${me}] This row was folded into lead ${survivor.id} (${survivor.name || "unnamed"}). Kept for the audit trail; it is not a lead any more.`,
+      raw_notes: `[${todayStr()} merged by ${me}] This row was folded into lead ${survivor.id} (${current.name || "unnamed"}). Kept for the audit trail; it is not a lead any more.`,
       updated_at: new Date().toISOString(),
     })
     .eq("id", loser.id);

@@ -10,7 +10,7 @@
 // because this is the one action in the app that isn't one click of undo.
 
 import { useMemo, useState } from "react";
-import { Merge, Phone, ChevronDown, ChevronRight } from "lucide-react";
+import { Merge, Phone, Users, ChevronDown, ChevronRight } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { duplicateGroups, mergeLeads, previewMerge } from "@/lib/merge";
 import { canonicalPhone } from "@/lib/phone";
@@ -58,14 +58,16 @@ function Group({
     setBusy(true);
     setErr(null);
     try {
-      // One at a time and in order: each merge re-reads nothing, so folding
-      // three rows means folding the second into the already-updated survivor.
+      // One at a time and in order. mergeLeads re-reads the survivor before
+      // each pass, so folding three rows folds the second into the row the
+      // first pass already updated rather than into a stale copy.
       for (const loser of losers) {
         await mergeLeads(survivor, loser, me);
       }
       onMerged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Merge failed");
+    } finally {
       setBusy(false);
     }
   }
@@ -171,28 +173,84 @@ export default function DuplicateGroups({
   onOpen: (lead: LeadWithBucket) => void;
   onMerged: () => void;
 }) {
-  const groups = useMemo(() => duplicateGroups(leads), [leads]);
+  const { duplicates, households } = useMemo(() => duplicateGroups(leads), [leads]);
 
-  if (groups.length === 0) {
+  if (duplicates.length === 0 && households.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center">
-        <p className="text-sm text-later">
-          No two rows share a phone number. Nothing to merge.
-        </p>
+        <p className="text-sm text-later">No two rows share a phone number. Nothing to look at.</p>
       </div>
     );
   }
 
-  const rows = groups.reduce((n, g) => n + g.length, 0);
+  const dupeRows = duplicates.reduce((n, g) => n + g.length, 0);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-card">
-      <p className="border-b border-line bg-paper/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-later">
-        {groups.length} number{groups.length === 1 ? "" : "s"} · {rows} rows · pick the record to keep
-      </p>
-      {groups.map((g) => (
-        <Group key={canonicalPhone(g[0].phone)} group={g} onOpen={onOpen} onMerged={onMerged} />
-      ))}
+    <div className="space-y-4">
+      {duplicates.length > 0 ? (
+        <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-card">
+          <p className="border-b border-line bg-paper/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-later">
+            {duplicates.length} number{duplicates.length === 1 ? "" : "s"} · {dupeRows} rows · pick
+            the record to keep
+          </p>
+          {duplicates.map((g) => (
+            <Group key={canonicalPhone(g[0].phone)} group={g} onOpen={onOpen} onMerged={onMerged} />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-line bg-white p-8 text-center">
+          <p className="text-sm text-later">
+            Nothing here is safely mergeable. Every shared number below belongs to two different
+            people.
+          </p>
+        </div>
+      )}
+
+      {/* Not a to-do list. This is the answer to "why does that lead carry a
+          dupe chip if there's nothing to merge" — and it's worth knowing on its
+          own terms, because these are one household with one phone, and calling
+          it twice in a day is the same mistake as working a duplicate. */}
+      {households.length > 0 && (
+        <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-card">
+          <div className="border-b border-line bg-paper/60 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-later">
+              {households.length} shared number{households.length === 1 ? "" : "s"} · two people, not
+              a duplicate
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-worked">
+              Mostly married couples on one landline: two names, two birthdays, two separate
+              enrollment windows, so there is deliberately no merge button here. A few are near-miss
+              spellings that are too close to call automatically — if two of these really are one
+              person, correct the name on one of them and they&apos;ll move up into the mergeable
+              list. What the section is worth on its own: one call reaches both, and dialing the
+              number twice in a day reaches the same kitchen.
+            </p>
+          </div>
+          {households.map((g) => (
+            <div key={canonicalPhone(g[0].phone)} className="border-b border-line px-3 py-2.5 last:border-b-0">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-ink tabular-nums">
+                <Users size={12} className="text-worked" aria-hidden />
+                {g[0].phone}
+                <span className="font-normal text-later">
+                  {g[0].address ? `· ${g[0].address}` : ""}
+                </span>
+              </p>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                {g.map((l) => (
+                  <button
+                    key={l.id}
+                    onClick={() => onOpen(l)}
+                    className="flex items-center gap-1.5 text-xs text-worked hover:text-ink"
+                  >
+                    <span className="font-medium">{l.name || "Unnamed"}</span>
+                    <T65Badge birthday={l.birthday} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

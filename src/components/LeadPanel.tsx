@@ -38,9 +38,16 @@ export default function LeadPanel({
 
   // Closing and reopening someone else must not land you back in the editor —
   // and a control that promised the editor must still deliver it.
+  //
+  // Keyed on the ID, not the object: this component hands EditDrawer a row it
+  // re-resolves from the live book, so `lead` is a new object on every reload,
+  // and the book reloads whenever either agent touches anything. Depending on
+  // the object meant that opening the full record and starting to type got you
+  // thrown back to the card the moment anyone logged a call.
   useEffect(() => {
     setEditing(lead ? openTo === "editor" : false);
-  }, [lead, openTo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?.id, openTo]);
 
   if (!lead) return null;
   const live = leads.find((l) => l.id === lead.id) || lead;
