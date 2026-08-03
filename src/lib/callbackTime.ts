@@ -16,7 +16,7 @@ export const SLOTS: Slot[] = [
   { key: "morning", label: "morning", hour: 9, minute: 30 },
   { key: "midday", label: "midday", hour: 12, minute: 30 },
   { key: "afternoon", label: "afternoon", hour: 15, minute: 30 },
-  { key: "evening", label: "early evening", hour: 17, minute: 45 },
+  { key: "evening", label: "late afternoon", hour: 17, minute: 45 },
 ];
 
 /** Which slot an attempt at this hour belongs to. */
@@ -28,40 +28,51 @@ export function slotOfHour(hour: number): Slot {
 }
 
 /**
- * The next slot to try. Evening is the most valuable, so the rotation walks
- * toward it rather than cycling back to the morning you already burned.
+ * Slots a retry may be BOOKED into, in time order.
+ *
+ * Midday is missing on purpose. It is a slot a call can land in — someone
+ * dialling at 1pm is doing midday — but it is never somewhere to send a retry:
+ * it catches almost nobody, and the Stats hour panel bears that out.
  */
-export function nextSlot(lastHour: number | null): Slot {
-  if (lastHour === null) return SLOTS[0];
-  const i = SLOTS.indexOf(slotOfHour(lastHour));
-  return SLOTS[(i + 1) % SLOTS.length];
-}
+export const RETRY_SLOTS: Slot[] = SLOTS.filter((s) => s.key !== "midday");
 
-/** Sunday is not a calling day, and neither is before 8am or after 9pm. */
-function nudgeIntoAWorkingDay(d: Date): Date {
-  const out = new Date(d);
-  if (out.getDay() === 0) out.setDate(out.getDate() + 1); // Sunday -> Monday
-  return out;
-}
+/** Sunday is not a calling day. */
+const isCallingDay = (d: Date) => d.getDay() !== 0;
 
 /**
- * A dated, timed callback: `days` from now, in a slot that isn't the one that
- * just failed. Returns null when the disposition doesn't earn a retry.
+ * A dated, timed callback: at least `days` from now, at the first hour that
+ * isn't the one that just failed.
+ *
+ * "Whichever is first", not a fixed rotation. A morning no-answer used to walk
+ * one step round a four-slot cycle and land at midday, which is the worst hour
+ * on the board. Now it takes the earliest remaining slot on the target day —
+ * afternoon, or late afternoon if the afternoon has already gone — so the retry
+ * is as soon as it can be while still being a genuinely different time of day.
+ *
+ * Returns null when the disposition doesn't earn a retry.
  */
 export function scheduleCallback(days: number | null, lastAttemptHour: number | null): Date | null {
   if (days === null) return null;
-  const slot = nextSlot(lastAttemptHour);
-  const d = new Date();
-  d.setDate(d.getDate() + Math.max(days, 0));
-  d.setHours(slot.hour, slot.minute, 0, 0);
-  const when = nudgeIntoAWorkingDay(d);
-  // Never schedule something already in the past (a same-day retry booked at
-  // 9:30 when it's already 4pm would land overdue the moment it was made).
-  if (when.getTime() <= Date.now()) {
-    when.setDate(when.getDate() + 1);
-    return nudgeIntoAWorkingDay(when);
+  const failed = lastAttemptHour === null ? null : slotOfHour(lastAttemptHour).key;
+  const candidates = RETRY_SLOTS.filter((s) => s.key !== failed);
+  if (!candidates.length) return null;
+
+  const start = Math.max(days, 0);
+  // Walk forward a day at a time. The inner loop is in time order, so the first
+  // hit is genuinely the earliest moment that qualifies.
+  for (let offset = start; offset < start + 8; offset++) {
+    const day = new Date();
+    day.setDate(day.getDate() + offset);
+    if (!isCallingDay(day)) continue;
+    for (const slot of candidates) {
+      const when = new Date(day);
+      when.setHours(slot.hour, slot.minute, 0, 0);
+      // Never book something already in the past — a same-day retry at 9:30
+      // booked at 4pm would land overdue the moment it was made.
+      if (when.getTime() > Date.now()) return when;
+    }
   }
-  return when;
+  return null;
 }
 
 /** "Thursday morning" — what the retry actually means, in words. */

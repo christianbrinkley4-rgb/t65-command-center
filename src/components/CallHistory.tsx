@@ -8,10 +8,31 @@
 // the survey, then every logged touch, then the free-text history that came in
 // from the trackers and SmartAsset.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { History } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { isDial } from "@/lib/callOutcomes";
+import { RETRY_SLOTS, SLOTS, slotOfHour } from "@/lib/callbackTime";
 import type { Activity, LeadWithBucket } from "@/lib/types";
+
+/**
+ * "Jul 31, 4:46 PM" — and the year only when it isn't this one. Asking for a
+ * 2-digit year inline gave "Jul 31, 26, 4:46 PM", where the year reads as part
+ * of the time.
+ */
+function stamp(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 export default function CallHistory({
   lead,
@@ -30,7 +51,9 @@ export default function CallHistory({
       .select("id, lead_id, activity_type, activity_date, outcome, notes, logged_by")
       .eq("lead_id", lead.id)
       .order("activity_date", { ascending: false })
-      .limit(limit)
+      // Fetch more than we show: the list stays short, but the "already tried"
+      // summary above it is counted over the fuller history.
+      .limit(Math.max(limit, 25))
       .then(({ data }) => {
         if (!cancelled) setRows((data as Activity[]) || []);
       });
@@ -38,6 +61,28 @@ export default function CallHistory({
       cancelled = true;
     };
   }, [lead.id, limit]);
+
+  // Slots already burned, and the one that hasn't been. Counted over every row
+  // fetched, not just the handful shown, so the summary isn't a lie of omission.
+  const { tried, untried } = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of rows || []) {
+      if (!isDial(a.activity_type, a.outcome) || !a.activity_date) continue;
+      const d = new Date(a.activity_date);
+      if (isNaN(d.getTime())) continue;
+      const slot = slotOfHour(d.getHours());
+      counts.set(slot.label, (counts.get(slot.label) || 0) + 1);
+    }
+    const list = SLOTS.filter((s) => counts.has(s.label)).map((s) => ({
+      label: s.label,
+      count: counts.get(s.label)!,
+    }));
+    // Only worth naming a gap once they've actually tried a couple of times.
+    const total = list.reduce((n, t) => n + t.count, 0);
+    const gap =
+      total >= 2 ? RETRY_SLOTS.find((s) => !counts.has(s.label))?.label ?? null : null;
+    return { tried: list, untried: gap };
+  }, [rows]);
 
   const notes = String(lead.raw_notes || lead.notes || "").trim();
   const nothing = !lead.lead_profile && !notes && rows !== null && rows.length === 0;
@@ -57,19 +102,24 @@ export default function CallHistory({
 
       {rows === null && <p className="text-xs text-later">Loading history…</p>}
 
+      {/* Which hours are already burned. The single most useful thing to know
+          before you press dial: three attempts that all say 10-something are
+          not three bad leads, they're one bad hour tried three times. */}
+      {tried.length > 0 && (
+        <p className="mb-2 text-[11px] text-worked">
+          <span className="font-semibold uppercase tracking-wide text-later">Already tried</span>{" "}
+          {tried.map((t) => `${t.label} ×${t.count}`).join(" · ")}
+          {untried && <span className="text-brand-dark"> — never tried {untried}</span>}
+        </p>
+      )}
+
       {rows !== null && rows.length > 0 && (
         <ul className="mb-2 space-y-1">
-          {rows.map((a) => (
+          {rows.slice(0, limit).map((a) => (
             <li key={a.id} className="text-xs leading-snug">
-              <span className="tabular-nums text-later">
-                {a.activity_date
-                  ? new Date(a.activity_date).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "2-digit",
-                    })
-                  : "—"}
-              </span>{" "}
+              {/* Date AND time. The date alone tells you they didn't pick up;
+                  the time tells you what to do differently. */}
+              <span className="tabular-nums text-later">{stamp(a.activity_date)}</span>{" "}
               <span className="font-medium text-ink">{a.outcome || a.activity_type}</span>
               {a.logged_by ? <span className="text-later"> · {a.logged_by}</span> : null}
               {a.notes ? <span className="text-worked"> — {a.notes}</span> : null}
