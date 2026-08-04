@@ -201,10 +201,6 @@ export default function EditDrawer({
       // That flag IS a request to come here and fix something.
       setShowIdentity(needsInfo(lead));
       setAppt(lead.appointment_datetime ? toLocalInput(lead.appointment_datetime) : "");
-      // The box means "they asked", not "any DNC flag" — a lead carrying only a
-      // bulk scrub must not show it ticked, or saving would silently promote a
-      // list entry into a permanent personal suppression.
-      setDoNotCall(askedNotToBeCalled(lead));
       setSoaOnFile(!!lead.soa_on_file);
       setSoaDate(lead.soa_date || "");
       setPtcOnFile(!!lead.ptc_on_file);
@@ -275,12 +271,9 @@ export default function EditDrawer({
         next_follow_up_date: followUp || null,
         next_follow_up_note: followUpNote || null,
         appointment_datetime: appt ? new Date(appt).toISOString() : null,
-        // Ticking the box by hand IS the request. Unticking removes the request
-        // but leaves any bulk scrub exactly where it was — the box never had
-        // authority over the list, and clearing it here would quietly undo an
-        // import on every unrelated save.
-        do_not_call: doNotCall || onScrubList(lead),
-        dnc_reason: doNotCall ? "requested" : onScrubList(lead) ? "scrubbed" : null,
+        // Deliberately absent: do_not_call and dnc_reason. Saving an unrelated
+        // field must never touch a suppression. They're written by the DNC
+        // disposition, by an import, or by the explicit button on the banner.
         soa_on_file: soaOnFile,
         soa_date: soaDate || null,
         ptc_on_file: ptcOnFile,
@@ -424,6 +417,31 @@ export default function EditDrawer({
     }
   }
 
+  /**
+   * Undo a do-not-call REQUEST. Any bulk scrub underneath stays, because that
+   * came from a list and this button has no authority over it — the lead just
+   * goes back to being callable like the other 1,831.
+   */
+  async function clearDncRequest() {
+    if (!lead) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const stillScrubbed = onScrubList(lead);
+      await updateLead(lead.id, {
+        do_not_call: stillScrubbed,
+        dnc_reason: stillScrubbed ? "scrubbed" : null,
+        updated_at: new Date().toISOString(),
+      });
+      await logActivity(lead.id, "Update", "Do-not-call request cleared", "Recorded as a misclick", me);
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not clear that");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function doApptOutcome(key: string) {
     if (!lead) return;
     const o = APPT_OUTCOMES.find((x) => x.key === key);
@@ -498,11 +516,25 @@ export default function EditDrawer({
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {(askedNotToBeCalled(lead) || lead._dncSuppressed) && (
-            <div className="rounded-lg border border-overdue/40 bg-overdue-50 px-3 py-2 text-xs font-semibold text-overdue">
-              {askedNotToBeCalled(lead)
-                ? "This person asked not to be called."
-                : "Someone at this number asked not to be called."}{" "}
-              Kept out of every calling queue.
+            <div className="rounded-lg border border-overdue/40 bg-overdue-50 px-3 py-2 text-xs text-overdue">
+              <p className="font-semibold">
+                {askedNotToBeCalled(lead)
+                  ? "This person asked not to be called."
+                  : "Someone at this number asked not to be called."}{" "}
+                Kept out of every calling queue.
+              </p>
+              {/* The only way back. Removing the checkbox would otherwise have
+                  made a misclicked DNC permanent and unfixable in the UI. */}
+              {askedNotToBeCalled(lead) && (
+                <button
+                  type="button"
+                  onClick={clearDncRequest}
+                  disabled={saving}
+                  className="mt-1.5 rounded-md border border-overdue/40 bg-white px-2.5 py-1 text-[11px] font-medium text-overdue hover:bg-overdue-50 disabled:opacity-50"
+                >
+                  That was a misclick — allow calls again
+                </button>
+              )}
             </div>
           )}
           {onScrubList(lead) && (
@@ -851,22 +883,10 @@ export default function EditDrawer({
 
           <div className="rounded-xl border border-line bg-paper/60 p-3">
             <p className="text-xs font-semibold text-slate-600">Compliance</p>
-            <label className="mt-2 flex items-start gap-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={doNotCall}
-                onChange={(e) => setDoNotCall(e.target.checked)}
-              />
-              <span>
-                They asked not to be called
-                <span className="block text-[11px] text-slate-500">
-                  Hard suppression — removes them from every queue, permanently. Ticking this by
-                  hand records it as a request, the same as pressing DNC on a call. It is not the
-                  same as being on a bulk DNC list.
-                </span>
-              </span>
-            </label>
+            {/* No do-not-call checkbox. It's set by pressing DNC on a live
+                call, which is the only moment anyone actually asks — a tickbox
+                in a drawer just invited it to be set by accident. Clearing a
+                mistake lives on the banner at the top of this panel. */}
             <label className="mt-2 flex items-center gap-2 text-xs text-slate-700">
               <input type="checkbox" checked={ptcOnFile} onChange={(e) => setPtcOnFile(e.target.checked)} />
               Permission to contact on file
