@@ -11,6 +11,7 @@ import BarList from "@/components/BarList";
 import Donut from "@/components/Donut";
 import ActivityStats from "@/components/ActivityStats";
 import { isDial, isReached } from "@/lib/callOutcomes";
+import { askedNotToBeCalled, onScrubList } from "@/lib/types";
 import type { Activity } from "@/lib/types";
 
 const SOURCE_ORDER = [
@@ -278,8 +279,11 @@ export default function StatsPage() {
     const noBirthday = scoped.filter((l) => !l.birthday).length;
     const noEmail = scoped.filter((l) => !l.email).length;
     const dupes = scoped.filter((l) => l._dupe).length;
-    const dnc = scoped.filter((l) => l.do_not_call).length;
-    return { noPhone, noBirthday, noEmail, dupes, dnc };
+    // Split, because they mean opposite things: one is a suppression you must
+    // honour, the other is a label on leads that stay in the queue.
+    const dnc = scoped.filter((l) => askedNotToBeCalled(l)).length;
+    const scrubbed = scoped.filter((l) => onScrubList(l)).length;
+    return { noPhone, noBirthday, noEmail, dupes, dnc, scrubbed };
   }, [scoped]);
 
   return (
@@ -501,7 +505,7 @@ export default function StatsPage() {
         {/* Every number that has somewhere to go, goes there. A dashboard that
             reports 104 duplicates and offers no way to reach them is just a
             reminder to feel bad. */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.noPhone.toLocaleString()}</p>
             <p className="text-xs text-slate-500">no phone (uncallable)</p>
@@ -529,9 +533,16 @@ export default function StatsPage() {
           </div>
           <div>
             <p className="text-xl font-semibold text-ink">{dataHealth.dnc.toLocaleString()}</p>
-            <p className="text-xs text-slate-500">do-not-call</p>
+            <p className="text-xs text-slate-500">asked not to be called</p>
             <Link href="/list/?seg=dnc" className="text-[11px] font-medium text-brand hover:underline">
-              Review the list
+              Review
+            </Link>
+          </div>
+          <div>
+            <p className="text-xl font-semibold text-ink">{dataHealth.scrubbed.toLocaleString()}</p>
+            <p className="text-xs text-slate-500">on a DNC list (still callable)</p>
+            <Link href="/list/?seg=scrublist" className="text-[11px] font-medium text-brand hover:underline">
+              Review
             </Link>
           </div>
         </div>

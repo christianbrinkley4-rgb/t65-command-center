@@ -20,6 +20,7 @@ import { listLabel } from "@/lib/categories";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
 import { effectiveDueDate } from "@/lib/buckets";
 import { isFresh, withinCallingHours, type ScoredLead } from "@/lib/priority";
+import { askedNotToBeCalled, onScrubList } from "@/lib/types";
 
 // Short labels for the one-tap call results, in the order agents actually use.
 const RESULT_LABEL: Record<string, string> = {
@@ -213,6 +214,24 @@ export default function PowerListRow({
             {lead._dupe && (
               <span className="rounded bg-due-50 px-1.5 py-0.5 text-[10px] font-semibold text-due">
                 dupe
+              </span>
+            )}
+            {/* Two different facts, two different chips. Red means a person
+                asked; amber means a list said so and nobody asked. */}
+            {askedNotToBeCalled(lead) && (
+              <span
+                className="rounded bg-overdue px-1.5 py-0.5 text-[10px] font-bold uppercase text-white"
+                title="This person asked not to be called"
+              >
+                asked to stop
+              </span>
+            )}
+            {onScrubList(lead) && (
+              <span
+                className="rounded bg-due-50 px-1.5 py-0.5 text-[10px] font-semibold text-due"
+                title="Flagged by a bulk list scrub, not by the person. Nobody asked."
+              >
+                DNC list
               </span>
             )}
             {(lead.tags || []).slice(0, 3).map((t) => (

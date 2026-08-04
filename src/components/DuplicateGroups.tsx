@@ -16,7 +16,7 @@ import { duplicateGroups, mergeLeads, previewMerge } from "@/lib/merge";
 import { canonicalPhone } from "@/lib/phone";
 import { listLabel } from "@/lib/categories";
 import T65Badge from "@/components/T65Badge";
-import type { LeadWithBucket } from "@/lib/types";
+import { askedNotToBeCalled, onScrubList, type LeadWithBucket } from "@/lib/types";
 
 function factLine(l: LeadWithBucket): string {
   const bits: string[] = [];
@@ -26,7 +26,8 @@ function factLine(l: LeadWithBucket): string {
   if (l.last_contact_date) bits.push(`last worked ${l.last_contact_date}`);
   if (l.oscr_lead_id) bits.push("linked to OSCR");
   if (l.appointment_datetime) bits.push("has an appointment");
-  if (l.do_not_call) bits.push("DNC");
+  if (askedNotToBeCalled(l)) bits.push("asked to stop");
+  else if (onScrubList(l)) bits.push("on a DNC list");
   return bits.join(" · ");
 }
 

@@ -35,6 +35,11 @@ export type Lead = {
   updated_at: string | null;
   address: string | null;
   do_not_call: boolean | null;
+  /**
+   * WHY the do-not-call flag is set. See askedNotToBeCalled().
+   * 'requested' — they told us to stop. 'scrubbed' — a bulk list suppression.
+   */
+  dnc_reason: "requested" | "scrubbed" | null;
   soa_on_file: boolean | null;
   soa_date: string | null;
   ptc_on_file: boolean | null;
@@ -126,6 +131,39 @@ export function hasPriorWork(lead: {
   const disp = String(lead.oscr_latest_disp || "").trim();
   if (disp && disp.toLowerCase() !== "no_disposition") return true;
   return Boolean(lead.oscr_last_disp_date);
+}
+
+/**
+ * This person told us to stop calling them.
+ *
+ * `do_not_call` was carrying two completely different facts. 22 leads were
+ * dispositioned DNC by a human here, on a call, because the person asked — 21
+ * of those 22 had genuinely been spoken to. The other 1,831 are a bulk list
+ * suppression inherited from OSCR's `callable = false`, and 1,669 of them have
+ * never been contacted by anyone, which is how you know nobody asked.
+ *
+ * Storing both as one boolean meant the app hid all 1,912 identically: a
+ * quarter of the book invisible, with the handful that genuinely matter buried
+ * inside it. Only a recorded request suppresses a lead now; a scrub is a label
+ * you can see and work past.
+ *
+ * Unknown counts as scrubbed on purpose. A real request is always written
+ * explicitly — by the DNC disposition here, or by the backfill — so defaulting
+ * the other way would let the next OSCR import silently re-hide the book.
+ */
+export function askedNotToBeCalled(lead: {
+  do_not_call?: boolean | null;
+  dnc_reason?: string | null;
+}): boolean {
+  return Boolean(lead.do_not_call) && lead.dnc_reason === "requested";
+}
+
+/** Flagged by a bulk list scrub rather than by the person themselves. */
+export function onScrubList(lead: {
+  do_not_call?: boolean | null;
+  dnc_reason?: string | null;
+}): boolean {
+  return Boolean(lead.do_not_call) && lead.dnc_reason !== "requested";
 }
 
 export type SavedView = {

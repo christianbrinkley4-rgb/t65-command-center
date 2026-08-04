@@ -1,6 +1,6 @@
 import { effectiveDueDate } from "./buckets";
 import { formatActionDue, nextPendingAction } from "./actions";
-import { hasPriorWork, isClosedStatus, needsInfo } from "./types";
+import { askedNotToBeCalled, hasPriorWork, isClosedStatus, needsInfo } from "./types";
 import { trustedHomeValue } from "./homeValue";
 import type { LeadWithBucket } from "./types";
 
@@ -151,9 +151,12 @@ export function scoreLead(lead: LeadWithBucket): ScoredLead {
 // The full ranked queue: every workable lead, best first. Due work floats to
 // the top; when it runs out the queue flows into never-dialed leads, so it
 // never comes back empty.
-// A lead is dialable only if neither it nor any lead sharing its phone is DNC.
+// A lead is dialable unless it, or somebody sharing its phone, actually asked
+// us to stop. A bulk list scrub is a label, not a suppression — see
+// askedNotToBeCalled(). Treating the two the same hid 1,912 leads, a quarter of
+// the book, including 1,669 nobody had ever contacted.
 export function isDialable(lead: LeadWithBucket): boolean {
-  return !lead.do_not_call && !lead._dncSuppressed;
+  return !askedNotToBeCalled(lead) && !lead._dncSuppressed;
 }
 
 /**

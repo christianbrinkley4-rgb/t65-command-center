@@ -15,7 +15,7 @@ import { listLabel } from "@/lib/categories";
 import { iepPhase, IEP_LABEL, isFresh } from "@/lib/priority";
 import { trustedHomeValue } from "@/lib/homeValue";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
-import type { LeadWithBucket } from "@/lib/types";
+import { askedNotToBeCalled, onScrubList, type LeadWithBucket } from "@/lib/types";
 
 export default function LeadCardHeader({
   lead,
@@ -66,8 +66,21 @@ export default function LeadCardHeader({
             {IEP_LABEL[phase]}
           </span>
         )}
-        {lead.do_not_call && (
-          <span className="rounded bg-overdue px-2 py-0.5 text-[11px] font-semibold text-white">DNC</span>
+        {askedNotToBeCalled(lead) && (
+          <span
+            className="rounded bg-overdue px-2 py-0.5 text-[11px] font-semibold text-white"
+            title="This person asked not to be called"
+          >
+            Asked to stop
+          </span>
+        )}
+        {onScrubList(lead) && (
+          <span
+            className="rounded bg-due-50 px-2 py-0.5 text-[11px] font-semibold text-due"
+            title="Flagged by a bulk list scrub, not by the person"
+          >
+            DNC list
+          </span>
         )}
       </div>
     </div>

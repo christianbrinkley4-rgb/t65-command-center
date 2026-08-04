@@ -78,8 +78,14 @@ export async function applyDisposition(
     dials_count: (lead.dials_count || 0) + 1,
     updated_at: now,
   };
-  // DNC is a hard, permanent suppression, not just a status.
-  if (d.key === "dnc") patch.do_not_call = true;
+  // Pressing DNC on a live call means the person asked. That is the hard,
+  // permanent kind, and it must be recorded as such — a bulk list scrub sets
+  // the same boolean and is deliberately NOT a suppression (see
+  // askedNotToBeCalled), so the reason is the only thing telling them apart.
+  if (d.key === "dnc") {
+    patch.do_not_call = true;
+    patch.dnc_reason = "requested";
+  }
   // If this lead came from OSCR, flag it so the result gets pushed back there.
   if (lead.oscr_lead_id) {
     patch.needs_oscr_writeback = true;

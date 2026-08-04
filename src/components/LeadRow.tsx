@@ -1,6 +1,6 @@
 "use client";
 
-import type { LeadWithBucket } from "@/lib/types";
+import { askedNotToBeCalled, type LeadWithBucket } from "@/lib/types";
 import { nextPendingAction } from "@/lib/actions";
 import T65Badge from "@/components/T65Badge";
 
@@ -35,9 +35,9 @@ export default function LeadRow({
               Dupe phone
             </span>
           )}
-          {lead.do_not_call && (
+          {askedNotToBeCalled(lead) && (
             <span className="shrink-0 rounded bg-overdue-50 px-1.5 py-0.5 text-[10px] font-semibold text-overdue">
-              DNC
+              Asked to stop
             </span>
           )}
         </p>

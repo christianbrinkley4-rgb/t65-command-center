@@ -241,6 +241,13 @@ export function previewMerge(survivor: Lead, loser: Lead): { patch: Partial<Lead
 
   // Suppressions only ever tighten.
   patch.do_not_call = Boolean(survivor.do_not_call || loser.do_not_call);
+  // A recorded request outranks a list scrub: if either row says the person
+  // asked, the survivor says so too.
+  patch.dnc_reason = patch.do_not_call
+    ? survivor.dnc_reason === "requested" || loser.dnc_reason === "requested"
+      ? "requested"
+      : "scrubbed"
+    : null;
   patch.do_not_knock = Boolean(survivor.do_not_knock || loser.do_not_knock);
   patch.soa_on_file = Boolean(survivor.soa_on_file || loser.soa_on_file);
   patch.ptc_on_file = Boolean(survivor.ptc_on_file || loser.ptc_on_file);

@@ -29,7 +29,7 @@ import { effectiveDueDate } from "@/lib/buckets";
 import T65Badge from "@/components/T65Badge";
 import LeadPanel from "@/components/LeadPanel";
 import NewLeadDialog from "@/components/NewLeadDialog";
-import type { LeadWithBucket, UiBucket } from "@/lib/types";
+import { askedNotToBeCalled, type LeadWithBucket, type UiBucket } from "@/lib/types";
 
 type Row =
   | { kind: "lead"; id: string; lead: LeadWithBucket; rank: number }
@@ -271,9 +271,9 @@ export default function CommandPalette() {
                               {row.lead.name || "Unnamed"}
                             </span>
                             <T65Badge birthday={row.lead.birthday} />
-                            {row.lead.do_not_call && (
+                            {askedNotToBeCalled(row.lead) && (
                               <span className="rounded bg-overdue px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                                DNC
+                                asked to stop
                               </span>
                             )}
                           </span>

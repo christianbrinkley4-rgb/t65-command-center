@@ -144,6 +144,12 @@ export function oscrToLead(c: Record<string, string>) {
     sms_consent: tri(c.sms_consent) === true,
     email_consent: tri(c.email_consent) === true,
     do_not_call: dncFlagged,
+    // A list scrub, explicitly. OSCR is telling us the number is suppressed on
+    // a list — it is not telling us the person asked, and it can't, because
+    // most of these leads have never been spoken to by anyone. Recording that
+    // difference is what stops the next import re-hiding a quarter of the book.
+    // See askedNotToBeCalled() in types.ts.
+    dnc_reason: dncFlagged ? "scrubbed" : null,
     raw_notes: c.notes || null,
     oscr_synced_at: new Date().toISOString(),
   };

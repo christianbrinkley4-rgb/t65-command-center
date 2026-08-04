@@ -22,7 +22,7 @@ import { altPhone } from "@/lib/phone";
 import LeadCardHeader from "@/components/LeadCardHeader";
 import CallHistory from "@/components/CallHistory";
 import SmartCapture from "@/components/SmartCapture";
-import type { LeadWithBucket } from "@/lib/types";
+import { askedNotToBeCalled, onScrubList, type LeadWithBucket } from "@/lib/types";
 
 export default function LeadCard({
   lead,
@@ -110,9 +110,17 @@ export default function LeadCard({
 
         <LeadCardHeader lead={lead} size="md" />
 
-        {(lead.do_not_call || lead._dncSuppressed) && (
+        {(askedNotToBeCalled(lead) || lead._dncSuppressed) && (
           <p className="mt-3 rounded-lg border border-overdue/40 bg-overdue-50 px-3 py-2 text-xs font-semibold text-overdue">
-            DNC — kept out of the calling queue. Only dial for a real reason.
+            {askedNotToBeCalled(lead)
+              ? "This person asked not to be called. Kept out of every queue."
+              : "Someone at this number asked not to be called. Kept out of every queue."}
+          </p>
+        )}
+        {onScrubList(lead) && (
+          <p className="mt-3 rounded-lg border border-due/40 bg-due-50 px-3 py-2 text-xs text-due">
+            <span className="font-semibold">On a DNC list.</span> Flagged by a bulk scrub, not by
+            anyone here — nobody at this number has asked you to stop.
           </p>
         )}
 

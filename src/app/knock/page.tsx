@@ -53,7 +53,7 @@ import {
   VALUE_BANDS,
   type Occupancy,
 } from "@/lib/valueBands";
-import { ACTION_ASSIGNEES, needsInfo } from "@/lib/types";
+import { ACTION_ASSIGNEES, askedNotToBeCalled, needsInfo } from "@/lib/types";
 import type { ActionAssignee, LeadWithBucket } from "@/lib/types";
 
 // datetime-local wants "YYYY-MM-DDTHH:MM" in LOCAL time — toISOString() would
@@ -307,8 +307,8 @@ export default function KnockPage() {
         const m = monthsToBirthdayMonth(l.birthday);
         return m !== null && m <= 6;
       });
-    if (phoneFilter === "callable") q = q.filter((l) => !l.do_not_call && (l.phone || l.phone2));
-    if (phoneFilter === "dnc") q = q.filter((l) => l.do_not_call);
+    if (phoneFilter === "callable") q = q.filter((l) => !askedNotToBeCalled(l) && (l.phone || l.phone2));
+    if (phoneFilter === "dnc") q = q.filter((l) => askedNotToBeCalled(l));
     if (!showKnockedToday) q = q.filter((l) => l.last_knock_date !== todayStr());
     return q;
   }, [knockable, cities, zips, lists, months, t65Filter, phoneFilter, showKnockedToday]);
@@ -707,7 +707,7 @@ ${prior}` : entry,
     // Occupants share a parcel, so the household's value is the best of them.
     const suspectValue = homeValueSuspect(hh.primary, multiUnit.has(hh.key));
     const hv = doorValue(hh);
-    const anyDnc = hh.occupants.some((o) => o.do_not_call);
+    const anyDnc = hh.occupants.some((o) => askedNotToBeCalled(o));
     const knocks = Math.max(...hh.occupants.map((o) => o.knock_count || 0), 0);
     const lastKnock = hh.occupants.map((o) => o.last_knock_date).filter(Boolean).sort().pop();
     const dialable = hh.occupants.find((o) => o.phone);
@@ -777,13 +777,13 @@ ${prior}` : entry,
             <a
               href={"tel:" + dialable.phone}
               className={
-                dialable.do_not_call
+                askedNotToBeCalled(dialable)
                   ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-due/40 bg-due-50 text-due"
                   : "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line text-worked hover:bg-paper"
               }
               title={
-                dialable.do_not_call
-                  ? dialable.phone + " — on the Do-Not-Call list. Dial only for a real reason."
+                askedNotToBeCalled(dialable)
+                  ? dialable.phone + " — this person asked not to be called."
                   : String(dialable.phone)
               }
             >

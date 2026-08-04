@@ -7,7 +7,7 @@ import { canonicalPhone } from "@/lib/phone";
 import { activeEnrollmentMap, fetchSequenceData } from "@/lib/sequences";
 import { actionMap, fetchPendingActions } from "@/lib/actions";
 import { cacheLeads, getCachedLeads } from "@/lib/offline";
-import { isMerged } from "@/lib/types";
+import { askedNotToBeCalled, isMerged } from "@/lib/types";
 import type { Lead, LeadAction, LeadWithBucket, Sequence, SequenceEnrollment, SequenceStep } from "@/lib/types";
 
 const PAGE_SIZE = 1000;
@@ -67,7 +67,10 @@ export function useLeads(enabled: boolean) {
       for (const l of all) {
         const p = canonicalPhone(l.phone);
         if (p && !isMerged(l)) phoneCounts.set(p, (phoneCounts.get(p) || 0) + 1);
-        if (l.do_not_call) {
+        // Only a recorded request suppresses the household's number. A bulk
+        // scrub on one row should not silently take the spouse out of the book
+        // too — that's how one list import removed a quarter of the leads.
+        if (askedNotToBeCalled(l)) {
           if (p) dncPhones.add(p);
           const p2 = canonicalPhone(l.phone2);
           if (p2) dncPhones.add(p2);

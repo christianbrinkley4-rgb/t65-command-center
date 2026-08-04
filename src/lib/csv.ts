@@ -1,6 +1,7 @@
 import type { Lead } from "./types";
 import { canonicalPhone } from "./phone";
 import { turns65Label } from "./priority";
+import { askedNotToBeCalled } from "./types";
 
 function cell(v: unknown): string {
   const s = v === null || v === undefined ? "" : String(v);
@@ -38,6 +39,7 @@ const COLUMNS: { label: string; get: (l: Lead) => unknown }[] = [
   { label: "Last Contact", get: (l) => l.last_contact_date },
   { label: "Assigned To", get: (l) => l.assigned_to },
   { label: "Do Not Call", get: (l) => l.do_not_call },
+  { label: "DNC Reason", get: (l) => l.dnc_reason },
   { label: "Dials", get: (l) => l.dials_count },
   { label: "Notes", get: (l) => l.raw_notes },
 ];
@@ -61,7 +63,11 @@ export function deftSalesCsv(leads: Lead[]): { csv: string; rows: number; skippe
   let skipped = 0;
   for (const l of leads) {
     const ph = canonicalPhone(l.phone) || canonicalPhone(l.phone2);
-    if (ph.length !== 10 || l.do_not_call || seen.has(ph)) {
+    // Only people who actually asked are withheld. A list scrub is a label the
+    // rest of the app now works past, and silently dropping 1,831 leads out of
+    // an export the app told you was "this view" would be the same conflation
+    // in another place.
+    if (ph.length !== 10 || askedNotToBeCalled(l) || seen.has(ph)) {
       skipped += 1;
       continue;
     }

@@ -190,7 +190,12 @@ export async function applyCapture(
   };
   if (opts.applyStatus && plan.status) patch.status = plan.status;
   if (opts.applyStatus && plan.stage) patch.stage_bucket = plan.stage;
-  if (plan.intent === "dnc") patch.do_not_call = true;
+  // Captured from something a human wrote about a conversation ("told me not to
+  // call again"), so this is a request, not a list.
+  if (plan.intent === "dnc") {
+    patch.do_not_call = true;
+    patch.dnc_reason = "requested";
+  }
   if (plan.intent === "appointment" && opts.apptDatetime) {
     patch.appointment_datetime = new Date(opts.apptDatetime).toISOString();
     patch.status = "Appointment Set";

@@ -30,7 +30,7 @@ import {
   scoreLead,
   workedToday,
 } from "./priority";
-import { needsInfo } from "./types";
+import { askedNotToBeCalled, needsInfo, onScrubList } from "./types";
 import { canonicalPhone } from "./phone";
 import type { ScoredLead } from "./priority";
 import type { LeadWithBucket } from "./types";
@@ -201,10 +201,19 @@ export const SEGMENTS: Segment[] = [
   },
   {
     key: "dnc",
-    label: "DNC",
+    label: "Asked to stop",
     source: "book",
-    match: (l) => Boolean(l.do_not_call || l._dncSuppressed),
-    blurb: "Your Do-Not-Call list, kept out of every calling queue. Listed here so you can audit it — only dial for a real reason.",
+    match: (l) => askedNotToBeCalled(l) || Boolean(l._dncSuppressed),
+    blurb: "People who told us to stop calling, and anyone sharing their number. These are the only leads a do-not-call flag actually suppresses — 22 of them, nearly all recorded on a live call. Bulk list scrubs are a separate thing and stay in the queue.",
+    tone: "warn",
+    on: ["list"],
+  },
+  {
+    key: "scrublist",
+    label: "On a DNC list",
+    source: "book",
+    match: (l) => onScrubList(l),
+    blurb: "Flagged by a bulk list scrub inherited from OSCR, not by the person — most have never been contacted by anyone. They stay in the calling queue and carry a chip so you know what you're looking at.",
     on: ["list"],
   },
   {

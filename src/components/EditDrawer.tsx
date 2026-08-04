@@ -29,7 +29,7 @@ import LeadIdentityFields, {
   type LeadIdentity,
 } from "@/components/LeadIdentityFields";
 import { supabase } from "@/lib/supabaseClient";
-import { needsInfo, NEEDS_INFO_STATUS } from "@/lib/types";
+import { askedNotToBeCalled, needsInfo, onScrubList, NEEDS_INFO_STATUS } from "@/lib/types";
 import type { Activity, LeadWithBucket, Template } from "@/lib/types";
 
 // One chronological feed per lead: activity_log rows (dials, dispositions,
@@ -201,7 +201,10 @@ export default function EditDrawer({
       // That flag IS a request to come here and fix something.
       setShowIdentity(needsInfo(lead));
       setAppt(lead.appointment_datetime ? toLocalInput(lead.appointment_datetime) : "");
-      setDoNotCall(!!lead.do_not_call);
+      // The box means "they asked", not "any DNC flag" — a lead carrying only a
+      // bulk scrub must not show it ticked, or saving would silently promote a
+      // list entry into a permanent personal suppression.
+      setDoNotCall(askedNotToBeCalled(lead));
       setSoaOnFile(!!lead.soa_on_file);
       setSoaDate(lead.soa_date || "");
       setPtcOnFile(!!lead.ptc_on_file);
@@ -272,7 +275,12 @@ export default function EditDrawer({
         next_follow_up_date: followUp || null,
         next_follow_up_note: followUpNote || null,
         appointment_datetime: appt ? new Date(appt).toISOString() : null,
-        do_not_call: doNotCall,
+        // Ticking the box by hand IS the request. Unticking removes the request
+        // but leaves any bulk scrub exactly where it was — the box never had
+        // authority over the list, and clearing it here would quietly undo an
+        // import on every unrelated save.
+        do_not_call: doNotCall || onScrubList(lead),
+        dnc_reason: doNotCall ? "requested" : onScrubList(lead) ? "scrubbed" : null,
         soa_on_file: soaOnFile,
         soa_date: soaDate || null,
         ptc_on_file: ptcOnFile,
@@ -489,9 +497,19 @@ export default function EditDrawer({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {(lead.do_not_call || lead._dncSuppressed) && (
+          {(askedNotToBeCalled(lead) || lead._dncSuppressed) && (
             <div className="rounded-lg border border-overdue/40 bg-overdue-50 px-3 py-2 text-xs font-semibold text-overdue">
-              DNC — this {lead._dncSuppressed && !lead.do_not_call ? "number is on your" : "lead is on your"} Do-Not-Call list. It&apos;s kept out of the calling queue; only dial for a real reason (existing client, they asked you to).
+              {askedNotToBeCalled(lead)
+                ? "This person asked not to be called."
+                : "Someone at this number asked not to be called."}{" "}
+              Kept out of every calling queue.
+            </div>
+          )}
+          {onScrubList(lead) && (
+            <div className="rounded-lg border border-due/40 bg-due-50 px-3 py-2 text-xs text-due">
+              <span className="font-semibold">On a DNC list.</span> Flagged by a bulk scrub inherited
+              from OSCR, not by anyone here — nobody at this number has asked you to stop, and most
+              leads with this flag have never been contacted at all. Stays in the calling queue.
             </div>
           )}
           <div className="flex gap-2">
@@ -533,12 +551,6 @@ export default function EditDrawer({
             {lead.home_value ? `$${Number(lead.home_value).toLocaleString()}` : "—"} · Tier:{" "}
             {lead.tier || "—"}
           </p>
-          {lead.do_not_call && (
-            <p className="rounded-lg bg-overdue-50 px-3 py-2 text-xs font-semibold text-overdue">
-              DO NOT CALL. This lead is suppressed from every call queue. Only clear the Do-not-call
-              box below if you are certain this was a mistake.
-            </p>
-          )}
           {lead._dupe && (
             <p className="rounded-lg bg-due-50 px-3 py-2 text-xs text-due">
               Another lead shares this phone number. Search the number before dialing so you and
@@ -839,9 +851,21 @@ export default function EditDrawer({
 
           <div className="rounded-xl border border-line bg-paper/60 p-3">
             <p className="text-xs font-semibold text-slate-600">Compliance</p>
-            <label className="mt-2 flex items-center gap-2 text-xs text-slate-700">
-              <input type="checkbox" checked={doNotCall} onChange={(e) => setDoNotCall(e.target.checked)} />
-              Do not call (hard suppression — removes from every queue)
+            <label className="mt-2 flex items-start gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={doNotCall}
+                onChange={(e) => setDoNotCall(e.target.checked)}
+              />
+              <span>
+                They asked not to be called
+                <span className="block text-[11px] text-slate-500">
+                  Hard suppression — removes them from every queue, permanently. Ticking this by
+                  hand records it as a request, the same as pressing DNC on a call. It is not the
+                  same as being on a bulk DNC list.
+                </span>
+              </span>
             </label>
             <label className="mt-2 flex items-center gap-2 text-xs text-slate-700">
               <input type="checkbox" checked={ptcOnFile} onChange={(e) => setPtcOnFile(e.target.checked)} />
