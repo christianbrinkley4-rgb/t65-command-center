@@ -4,7 +4,7 @@
 // order, one-tap the outcome at each door. Phone-DNC leads are INCLUDED on
 // purpose — the door is the only compliant channel left for them.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DoorOpen,
   MapPin,
@@ -14,6 +14,8 @@ import {
   ExternalLink,
   StickyNote,
   CalendarClock,
+  Bookmark,
+  Check,
 } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { supabase } from "@/lib/supabaseClient";
@@ -41,6 +43,20 @@ import {
   type Stop,
   type LatLng,
 } from "@/lib/route";
+import {
+  clearCurrentRoute,
+  deleteSavedRoute,
+  loadCurrentRoute,
+  loadSavedRoutes,
+  newRouteId,
+  putCurrentRoute,
+  putSavedRoute,
+  rehydrateRoute,
+  remainingCount,
+  savedAgo,
+  suggestRouteName,
+  type SavedRoute,
+} from "@/lib/savedRoutes";
 import RoutePlanner, { type RoutePlan } from "@/components/RoutePlanner";
 import T65Badge from "@/components/T65Badge";
 import MultiSelect from "@/components/MultiSelect";
@@ -130,6 +146,16 @@ export default function KnockPage() {
   const [watchId, setWatchId] = useState<number | null>(null);
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
+  // The written-down copy of the route. Set the moment one is built, updated as
+  // doors get worked, and the thing the resume bar offers back. Non-null while
+  // `route` is null means "you have a route waiting".
+  const [routeRec, setRouteRec] = useState<SavedRoute | null>(null);
+  const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
+  const [naming, setNaming] = useState(false);
+  const [nameText, setNameText] = useState("");
+  // Neutral status about the route itself (restored, doors dropped). Separate
+  // from routeErr, which is red and means something went wrong.
+  const [routeNote, setRouteNote] = useState<string | null>(null);
   // Per-door conversation note, captured at the door
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -139,9 +165,14 @@ export default function KnockPage() {
   const [followNote, setFollowNote] = useState("");
   const [followWho, setFollowWho] = useState<ActionAssignee>("Either");
 
+  // Changing a filter still drops you out of route view — you asked for a
+  // different set of doors. It no longer destroys the route: `routeRec` keeps
+  // it and the resume bar hands it straight back.
   useEffect(() => {
     setStreetLimit(25);
     setRoute(null);
+    setRouteNote(null);
+    setNaming(false);
   }, [cities, zips, lists, months, band, includeUnknownValue, occupancy, t65Filter]);
 
   // Keep the screen awake while a route or Near-me session is running. Nothing
@@ -380,6 +411,132 @@ export default function KnockPage() {
       .sort((a, b) => a.miles - b.miles);
   }, [households, radius, here]);
 
+
+  // ── saved routes ───────────────────────────────────────────────────────────
+
+  // Every door in the book, keyed the way a saved route stores it. Deliberately
+  // built from `knockable` and NOT from the filtered list: a route you saved on
+  // Tuesday has to come back on Thursday whatever the town filter says today.
+  // What it does respect is the book — a door closed, marked do-not-knock, or
+  // flagged wrong-info since you saved is gone, and should stay gone.
+  const doorsByKey = useMemo(() => {
+    const m = new Map<string, Household>();
+    for (const h of groupByHousehold(knockable)) m.set(h.key, h);
+    return m;
+  }, [knockable]);
+
+  const restoredRef = useRef(false);
+
+  // Come back to a route you were already walking. Within half a day it just
+  // reappears — you closed the tab at a door and reopened it at the same door,
+  // and being asked to confirm that is noise. Older than that it waits in the
+  // resume bar instead of ambushing you with last week's plan.
+  useEffect(() => {
+    if (restoredRef.current || leadsLoading) return;
+    restoredRef.current = true;
+    setSavedRoutes(loadSavedRoutes());
+    const cur = loadCurrentRoute();
+    if (!cur) return;
+    setRouteRec(cur);
+    // An empty book means the load failed or the cache is cold, not that the
+    // route is finished. Leave it in the resume bar rather than telling someone
+    // their doors are gone.
+    if (doorsByKey.size === 0) return;
+    const age = Date.now() - Date.parse(cur.savedAt);
+    if (Number.isFinite(age) && age < 12 * 60 * 60 * 1000 && remainingCount(cur) > 0) {
+      openRoute(cur, true);
+    }
+    // openRoute and doorsByKey are read once, on the first load with a book.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadsLoading]);
+
+  // Progress writes through on every knock. The alternative is a route that
+  // remembers its doors but forgets which ones you did, which is the half of
+  // the problem that actually costs you a re-knock.
+  useEffect(() => {
+    if (!routeRec || !route) return;
+    const keys = new Set(route.map((s) => s.hh?.key).filter(Boolean) as string[]);
+    const doneNow = [...done].filter((k) => keys.has(k));
+    const was = new Set(routeRec.done);
+    if (doneNow.length === was.size && doneNow.every((k) => was.has(k))) return;
+    const next: SavedRoute = { ...routeRec, done: doneNow, savedAt: new Date().toISOString() };
+    setRouteRec(next);
+    putCurrentRoute(next);
+    if (next.name) setSavedRoutes(putSavedRoute(next));
+  }, [done, route, routeRec]);
+
+  /**
+   * Put a stored route back on screen. Returns false when there's nothing left
+   * of it — every door worked or dropped out of the book — rather than showing
+   * an empty route and letting the agent work out why.
+   */
+  function openRoute(rec: SavedRoute, quiet = false): boolean {
+    const { stops, missing } = rehydrateRoute(rec, doorsByKey);
+    if (stops.length === 0) {
+      // Silent when we opened it ourselves — an error nobody asked for, on a
+      // page they just opened, reads as a broken app.
+      if (!quiet) {
+        setRouteErr(
+          "None of that route's doors are still on the list — they've been worked, closed, or marked do not knock."
+        );
+      }
+      return false;
+    }
+    // Opening a route makes it the one you're on, which is what has to come
+    // back if the app closes. Without this, opening Thursday's saved route and
+    // then losing the tab would hand you back the route you'd abandoned before
+    // it. The clock is restamped too, so a route you just picked up auto-
+    // resumes — except on the quiet path, where restamping would keep an
+    // abandoned route inside the 12-hour window forever.
+    const opened: SavedRoute = quiet ? rec : { ...rec, savedAt: new Date().toISOString() };
+    setRoute(stops);
+    setRouteStart(opened.start);
+    setRouteEnd(opened.end);
+    setRoutePlan(opened.plan);
+    setRouteRec(opened);
+    putCurrentRoute(opened);
+    setRouteErr(null);
+    // Doors worked on the route stay marked as worked, so resuming shows you
+    // where you stopped instead of making you remember it.
+    setDone((prev) => {
+      const n = new Set(prev);
+      for (const k of opened.done) n.add(k);
+      return n;
+    });
+    const left = stops.filter((s) => s.hh && !opened.done.includes(s.hh.key)).length;
+    const parts: string[] = [];
+    parts.push(quiet ? `Picked up where you left off — ${left} door${left === 1 ? "" : "s"} to go.` : `${left} door${left === 1 ? "" : "s"} still to knock.`);
+    if (missing > 0) {
+      parts.push(
+        `${missing} door${missing === 1 ? " has" : "s have"} come off the list since you saved it.`
+      );
+    }
+    setRouteNote(parts.join(" "));
+    return true;
+  }
+
+  /** Pin the route you're on under a name, so the next build can't overwrite it. */
+  function saveRouteAs(raw: string) {
+    if (!routeRec) return;
+    const name = raw.trim() || suggestRouteName(route || []);
+    const rec: SavedRoute = { ...routeRec, name, savedAt: new Date().toISOString() };
+    setRouteRec(rec);
+    putCurrentRoute(rec);
+    setSavedRoutes(putSavedRoute(rec));
+    setNaming(false);
+    setRouteNote(`Saved as "${name}". Open it from Plan route any time.`);
+  }
+
+  function forgetRoute(id: string) {
+    setSavedRoutes(deleteSavedRoute(id));
+    // Deleting the one you're on unpins it; it stays on screen and stays the
+    // current route, it just stops being in the saved list.
+    if (routeRec?.id === id) {
+      const rec: SavedRoute = { ...routeRec, name: null };
+      setRouteRec(rec);
+      putCurrentRoute(rec);
+    }
+  }
 
   // One tap records the outcome for EVERY occupant of the house — a couple is
   // one front door, and marking only the husband leaves the wife in tomorrow's
@@ -687,6 +844,22 @@ ${prior}` : entry,
     setRouteEnd(end);
     setRoute(built);
     setLocating(false);
+    setRouteNote(null);
+    setNaming(false);
+    // Written down before the first door. A route that only exists on screen is
+    // a route you lose to a phone call.
+    const rec: SavedRoute = {
+      id: newRouteId(),
+      name: null,
+      savedAt: new Date().toISOString(),
+      start,
+      end: end ?? null,
+      plan,
+      stops: built.map((s) => s.hh?.key).filter(Boolean) as string[],
+      done: [],
+    };
+    setRouteRec(rec);
+    putCurrentRoute(rec);
   }
 
   const routeEndLabel = routePlan?.endAtStart
@@ -695,13 +868,25 @@ ${prior}` : entry,
       : "back where you started"
     : routePlan?.endLabel || null;
 
+  // Doors on this route already knocked, counting the ones you did before you
+  // closed the app as well as the ones from this sitting.
+  const routeWorked = useMemo(
+    () => (route ? route.filter((s) => s.hh && done.has(s.hh.key)).length : 0),
+    [route, done]
+  );
+
   const routeStats = useMemo(() => {
     if (!route || !routeStart || route.length === 0) return null;
     const miles = routeMiles(routeStart, route, routeEnd);
     return { miles: miles.toFixed(1), minutes: estimateMinutes(miles, route.length) };
   }, [route, routeStart, routeEnd]);
 
-  function renderCard(hh: Household, badge?: React.ReactNode) {
+  /**
+   * `worked` dims a door you've already knocked on this route. It stays fully
+   * usable — you might disposition it again after a second conversation — but a
+   * resumed route has to show at a glance where you stopped.
+   */
+  function renderCard(hh: Household, badge?: React.ReactNode, worked = false) {
     const lead = hh.primary as LeadWithBucket;
     const others = hh.occupants.filter((o) => o.id !== lead.id);
     // Occupants share a parcel, so the household's value is the best of them.
@@ -717,7 +902,14 @@ ${prior}` : entry,
     const noteHistory = (lead.raw_notes || lead.notes || "").trim();
 
     return (
-      <article key={hh.key} className="rounded-2xl border border-line bg-white p-3.5 shadow-card">
+      <article
+        key={hh.key}
+        className={
+          worked
+            ? "rounded-2xl border border-line bg-white p-3.5 opacity-60 shadow-card"
+            : "rounded-2xl border border-line bg-white p-3.5 shadow-card"
+        }
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 text-[15px] font-semibold text-ink">
@@ -993,7 +1185,11 @@ ${prior}` : entry,
             </button>
           ) : (
             <button
-              onClick={() => setRoute(null)}
+              onClick={() => {
+                setRoute(null);
+                setRouteNote(null);
+                setNaming(false);
+              }}
               className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-worked hover:bg-paper"
             >
               Back to street list
@@ -1016,6 +1212,49 @@ ${prior}` : entry,
         <p role="alert" className="mb-3 rounded-xl border border-overdue/40 bg-overdue-50 px-3.5 py-2.5 text-xs text-overdue">
           {routeErr}
         </p>
+      )}
+
+      {routeNote && (
+        <p className="mb-3 rounded-xl border border-line bg-white px-3.5 py-2.5 text-xs text-worked">
+          {routeNote}
+        </p>
+      )}
+
+      {/* The route you were walking, waiting to be picked back up. Shows on
+          every path out of route view — a filter tap, "back to street list", a
+          reload, the tab being closed — so a planned route is never something
+          you have to rebuild from memory. */}
+      {route === null && routeRec && !leadsLoading && remainingCount(routeRec) > 0 && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-brand/30 bg-brand-light/40 px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate font-display text-base font-semibold text-ink">
+              {routeRec.name || "Your last route"}
+            </p>
+            <p className="text-xs text-worked tabular-nums">
+              {remainingCount(routeRec)} of {routeRec.stops.length} door
+              {routeRec.stops.length === 1 ? "" : "s"} left · {savedAgo(routeRec.savedAt)}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              onClick={() => openRoute(routeRec)}
+              className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark"
+            >
+              Resume
+            </button>
+            <button
+              onClick={() => {
+                clearCurrentRoute();
+                setRouteRec(null);
+                setRouteNote(null);
+              }}
+              aria-label="Discard the unfinished route"
+              className="rounded-lg border border-line bg-white px-2.5 py-2 text-xs text-worked hover:bg-paper"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
       )}
 
       {pricedOut > 0 && (
@@ -1255,6 +1494,7 @@ ${prior}` : entry,
         <div className="mb-4">
           <div className="mb-3 rounded-2xl border border-line bg-white p-4 shadow-card">
             <p className="font-display text-base font-semibold text-ink">
+              {routeRec?.name ? `${routeRec.name} · ` : ""}
               {route.length} stop{route.length === 1 ? "" : "s"}
               {routePlan?.startLabel ? ` · from ${routePlan.startLabel}` : ""}
               {routeEndLabel ? ` · ending ${routeEndLabel}` : ""}
@@ -1263,6 +1503,7 @@ ${prior}` : entry,
               <p className="mt-0.5 text-sm text-worked tabular-nums">
                 ~{routeStats.miles} mi driving · ~{routeStats.minutes} min door to door
                 {routePlan && routePlan.maxMiles > 0 ? ` · limit ${routePlan.maxMiles} mi` : ""}
+                {routeWorked > 0 ? ` · ${routeWorked} worked` : ""}
               </p>
             )}
             <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -1281,16 +1522,67 @@ ${prior}` : entry,
                 )
               )}
               <button
+                onClick={() => {
+                  setNaming(true);
+                  setNameText(routeRec?.name || suggestRouteName(route));
+                }}
+                className={
+                  routeRec?.name
+                    ? "flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand-light/60 px-3 py-2 text-xs font-semibold text-brand-dark"
+                    : "flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-xs text-worked hover:bg-paper"
+                }
+              >
+                <Bookmark size={12} aria-hidden />
+                {routeRec?.name ? "Saved" : "Save route"}
+              </button>
+              <button
                 onClick={openPlanner}
                 className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-xs text-worked hover:bg-paper"
               >
                 Change plan
               </button>
             </div>
+
+            {/* Naming it is what makes it survive the next build. Everything
+                else about the route is already written down. */}
+            {naming && (
+              <div className="mt-2 rounded-xl border border-brand/30 bg-brand-light/25 p-2">
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-later">
+                  Call this route
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    value={nameText}
+                    onChange={(e) => setNameText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveRouteAs(nameText);
+                    }}
+                    autoFocus
+                    aria-label="Name for this saved route"
+                    placeholder="Pleasant Garden · Thursday"
+                    className="min-h-11 flex-1 rounded-xl border border-line bg-white px-2.5 text-sm outline-none focus:border-brand"
+                  />
+                  <button
+                    onClick={() => saveRouteAs(nameText)}
+                    className="min-h-11 rounded-xl bg-brand px-4 text-sm font-semibold text-white"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setNaming(false)}
+                    aria-label="Cancel saving this route"
+                    className="min-h-11 rounded-xl border border-line px-3 text-sm text-worked"
+                  >
+                    &#10005;
+                  </button>
+                </div>
+              </div>
+            )}
+
             <p className="mt-2 text-[11px] text-later">
               Doors chosen as the tightest pocket on your way, then ordered for the shortest drive.
-              Straight-line miles, so the real drive runs a little longer. Knock results save as you
-              go — re-plan any time you move.
+              Straight-line miles, so the real drive runs a little longer. This route is kept as you
+              work it — close the app, change a filter, come back and pick it up.
             </p>
           </div>
           <div className="space-y-2">
@@ -1298,12 +1590,23 @@ ${prior}` : entry,
               const prev = idx === 0 ? routeStart : { lat: route[idx - 1].lat, lng: route[idx - 1].lng };
               const leg = haversineMiles(prev.lat, prev.lng, s.lat, s.lng);
               if (!s.hh) return null;
+              const worked = done.has(s.hh.key);
               return renderCard(
                 s.hh,
-                <span className="shrink-0 rounded-md bg-night px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-paper">
+                <span
+                  className={
+                    worked
+                      ? "flex shrink-0 items-center gap-0.5 rounded-md bg-newlead px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-white"
+                      : "shrink-0 rounded-md bg-night px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-paper"
+                  }
+                >
+                  {worked && <Check size={11} strokeWidth={3} aria-hidden />}
                   {idx + 1}
-                  <span className="ml-1 font-normal text-night-soft">{leg.toFixed(1)}mi</span>
-                </span>
+                  <span className={worked ? "ml-1 font-normal" : "ml-1 font-normal text-night-soft"}>
+                    {leg.toFixed(1)}mi
+                  </span>
+                </span>,
+                worked
               );
             })}
           </div>
@@ -1346,6 +1649,11 @@ ${prior}` : entry,
         open={plannerOpen}
         start={here}
         doorsAvailable={households.filter((h) => h.lat != null).length}
+        saved={savedRoutes}
+        onOpenSaved={(r) => {
+          if (openRoute(r)) setPlannerOpen(false);
+        }}
+        onDeleteSaved={forgetRoute}
         onCancel={() => setPlannerOpen(false)}
         onBuild={buildWithPlan}
       />

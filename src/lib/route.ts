@@ -33,6 +33,29 @@ export function haversineMiles(aLat: number, aLng: number, bLat: number, bLng: n
 
 export type LatLng = { lat: number; lng: number };
 
+/**
+ * What the agent asked for before the route was built. Lives here rather than
+ * with the dialog that collects it because a saved route has to store it and
+ * replay it later, and storage has no business importing a React component.
+ */
+export type RoutePlan = {
+  // null start = "wherever I am right now"; the page resolves it from GPS at
+  // build time rather than in the dialog, so a slow fix never blocks it.
+  start: LatLng | null;
+  startLabel: string | null;
+  end: LatLng | null;
+  endLabel: string | null;
+  // The geocodable address behind endLabel, for the Google Maps destination.
+  // endLabel is prose and must never be used for that.
+  endAddress: string | null;
+  // Finish where the route started, whatever that turns out to be. Kept as a
+  // flag instead of copying the point so it still works when the start is GPS
+  // and hasn't resolved yet.
+  endAtStart: boolean;
+  maxDoors: number; // 0 = no cap
+  maxMiles: number; // 0 = no cap
+};
+
 const dist = (a: LatLng, b: LatLng) => haversineMiles(a.lat, a.lng, b.lat, b.lng);
 
 /**

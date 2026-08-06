@@ -6,27 +6,15 @@
 // decide it.
 
 import { useEffect, useRef, useState } from "react";
-import { X, MapPin, LoaderCircle, Star } from "lucide-react";
+import { X, MapPin, LoaderCircle, Star, Bookmark, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import type { LatLng } from "@/lib/route";
+import type { LatLng, RoutePlan } from "@/lib/route";
+import { remainingCount, savedAgo, type SavedRoute } from "@/lib/savedRoutes";
 
-export type RoutePlan = {
-  // null start = "wherever I am right now"; the page resolves it from GPS at
-  // build time rather than here, so a slow fix never blocks the dialog.
-  start: LatLng | null;
-  startLabel: string | null;
-  end: LatLng | null;
-  endLabel: string | null;
-  // The geocodable address behind endLabel, for the Google Maps destination.
-  // endLabel is prose and must never be used for that.
-  endAddress: string | null;
-  // Finish where the route started, whatever that turns out to be. Kept as a
-  // flag instead of copying the point so it still works when the start is GPS
-  // and hasn't resolved yet.
-  endAtStart: boolean;
-  maxDoors: number; // 0 = no cap
-  maxMiles: number; // 0 = no cap
-};
+// The plan type lives in lib/route now, so saved-route storage can hold one
+// without importing a component. Re-exported because this dialog is still where
+// everyone expects to find it.
+export type { RoutePlan };
 
 export type SavedPlace = { label: string; address: string; lat: number; lng: number };
 
@@ -60,12 +48,18 @@ export default function RoutePlanner({
   open,
   start,
   doorsAvailable,
+  saved = [],
+  onOpenSaved,
+  onDeleteSaved,
   onCancel,
   onBuild,
 }: {
   open: boolean;
   start: LatLng | null;
   doorsAvailable: number;
+  saved?: SavedRoute[];
+  onOpenSaved?: (r: SavedRoute) => void;
+  onDeleteSaved?: (id: string) => void;
   onCancel: () => void;
   onBuild: (plan: RoutePlan) => void;
 }) {
@@ -78,6 +72,9 @@ export default function RoutePlanner({
   const [places, setPlaces] = useState<SavedPlace[]>([]);
   const [resolving, setResolving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Deleting a route takes two taps. One tap is too easy on a phone held in the
+  // same hand as a clipboard, and the route it throws away can't be rebuilt.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -85,6 +82,7 @@ export default function RoutePlanner({
       setPlaces(loadPlaces());
       setErr(null);
       setResolving(false);
+      setConfirmDelete(null);
     }
   }, [open]);
 
@@ -197,6 +195,67 @@ export default function RoutePlanner({
             <X size={18} aria-hidden />
           </button>
         </div>
+
+        {/* Routes you kept. Above the form on purpose: opening Thursday's
+            neighborhood again is one tap, not a rebuild that returns a
+            different set of doors in a different order. */}
+        {saved.length > 0 && onOpenSaved && (
+          <div className="mb-4">
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-later">
+              Saved routes
+            </p>
+            <div className="space-y-1.5">
+              {saved.map((r) => {
+                const left = remainingCount(r);
+                return (
+                  <div
+                    key={r.id}
+                    className="flex items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2"
+                  >
+                    <button
+                      onClick={() => onOpenSaved(r)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="flex items-center gap-1.5 truncate text-sm font-semibold text-ink">
+                        <Bookmark size={13} className="shrink-0 text-brand" aria-hidden />
+                        {r.name}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-worked tabular-nums">
+                        {r.stops.length} door{r.stops.length === 1 ? "" : "s"} ·{" "}
+                        {left === 0 ? "all worked" : `${left} left`} · updated{" "}
+                        {savedAgo(r.savedAt)}
+                      </span>
+                    </button>
+                    {onDeleteSaved &&
+                      (confirmDelete === r.id ? (
+                        <button
+                          onClick={() => {
+                            onDeleteSaved(r.id);
+                            setConfirmDelete(null);
+                          }}
+                          className="shrink-0 rounded-lg border border-overdue/40 bg-overdue-50 px-2.5 py-1.5 text-[11px] font-semibold text-overdue"
+                        >
+                          Delete
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDelete(r.id)}
+                          aria-label={`Delete saved route ${r.name}`}
+                          className="shrink-0 rounded-lg border border-line bg-white p-2 text-later hover:text-overdue"
+                        >
+                          <Trash2 size={14} aria-hidden />
+                        </button>
+                      ))}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-later">
+              A saved route reopens with today&apos;s notes and outcomes, in the order you
+              planned it.
+            </p>
+          </div>
+        )}
 
         {/* 1. Where does it start */}
         <fieldset className="mb-4">
