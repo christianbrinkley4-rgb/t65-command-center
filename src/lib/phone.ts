@@ -11,6 +11,29 @@ export function canonicalPhone(v: string | number | null | undefined): string {
   return d;
 }
 
+/**
+ * How a number is WRITTEN DOWN: 336-273-7565.
+ *
+ * Bought lists arrive as bare ten-digit strings, trackers arrive as
+ * "(336) 421-9302", and the book ended up holding both next to each other. A
+ * column of 3369405598 is unreadable at a glance, and reading a number off the
+ * screen onto a keypad is something that happens dozens of times a day.
+ *
+ * canonicalPhone() is the comparison form and stays digits-only. This is the
+ * human form, and it refuses to guess: anything that isn't exactly ten digits,
+ * or that carries an extension worth keeping, comes back untouched rather than
+ * mangled into a shape it isn't.
+ */
+export function formatPhone(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return "";
+  const raw = String(v).trim();
+  if (!raw) return "";
+  if (/\b(?:x|ext\.?|extension)\b/i.test(raw)) return raw;
+  const d = canonicalPhone(raw);
+  if (d.length !== 10) return raw;
+  return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
 export function samePhone(a: string | null | undefined, b: string | null | undefined): boolean {
   const ca = canonicalPhone(a);
   return ca.length === 10 && ca === canonicalPhone(b);

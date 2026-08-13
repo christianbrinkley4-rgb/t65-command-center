@@ -31,6 +31,19 @@ function canonPhone(v) {
   return d.length >= 10 ? d.slice(-10) : "";
 }
 
+// How a number is written down. Bought lists arrive as bare ten-digit strings
+// and a column of 3369405598 is unreadable at the speed you dial. Mirrors
+// formatPhone in src/lib/phone.ts — keep the two in step. Anything that isn't
+// exactly ten digits, or carries an extension, is left exactly as it came.
+function fmtPhone(v) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+  if (/\b(?:x|ext\.?|extension)\b/i.test(raw)) return raw;
+  const d = canonPhone(raw);
+  if (d.length !== 10) return raw;
+  return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
 const nameParts = (v) => {
   const w = String(v || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
   return { first: w[0] || "", last: w.length > 1 ? w[w.length - 1] : "" };
@@ -253,7 +266,7 @@ async function main() {
           const d = canonPhone(v);
           return d && !onFile.has(d);
         });
-        if (spare) patch.phone2 = spare;
+        if (spare) patch.phone2 = fmtPhone(spare);
       }
       if (isDnc && !match.do_not_call) stats.dncSet++;
       updates.push({ id: match.id, patch });
@@ -272,12 +285,12 @@ async function main() {
       source: oscrId ? normalizeSource(`OSCR:${r["Lead source"] || "Unknown"}`) : r["Lead source"] || "Imported list",
       assigned_to: "Both",
       name: r["Name"] || null,
-      phone: r["Primary phone"] || null,
+      phone: fmtPhone(r["Primary phone"]),
       phone2:
         r["Secondary phone"] &&
         canonPhone(r["Secondary phone"]) &&
         canonPhone(r["Secondary phone"]) !== canonPhone(r["Primary phone"])
-          ? r["Secondary phone"]
+          ? fmtPhone(r["Secondary phone"])
           : null,
       address: r["Street"] || null,
       city: r["City"] || null,

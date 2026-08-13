@@ -19,7 +19,7 @@
 // bought you.
 
 import { CalendarClock, TriangleAlert } from "lucide-react";
-import { canonicalPhone } from "@/lib/phone";
+import { canonicalPhone, formatPhone } from "@/lib/phone";
 import { turns65Label } from "@/lib/priority";
 import type { Lead } from "@/lib/types";
 
@@ -64,10 +64,13 @@ export function identityFromLead(lead: Lead): LeadIdentity {
 /** Trimmed, with empties as nulls so the database holds "unknown", not "". */
 export function identityPatch(id: LeadIdentity): Partial<Lead> {
   const v = (s: string) => (s.trim() ? s.trim() : null);
+  // Numbers are stored the way they're read: 336-273-7565. Typing one in as
+  // ten bare digits shouldn't leave the book in two formats again.
+  const p = (s: string) => (s.trim() ? formatPhone(s) : null);
   return {
     name: v(id.name),
-    phone: v(id.phone),
-    phone2: v(id.phone2),
+    phone: p(id.phone),
+    phone2: p(id.phone2),
     email: v(id.email),
     birthday: v(id.birthday),
     address: v(id.address),
