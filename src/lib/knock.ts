@@ -6,11 +6,11 @@
 // do_not_knock means the DOOR is off limits (resident said don't come back).
 // The two never imply each other.
 
-import { plusDays, todayStr } from "./sequences";
+import { localYmd, plusDays, todayStr } from "./sequences";
 import { writeOrQueue } from "./offline";
 import { canonicalStreet, MULTI_UNIT_LEADS } from "./homeValue";
-import { NEEDS_INFO_STAGE, NEEDS_INFO_STATUS } from "./types";
-import type { Lead, LeadWithBucket } from "./types";
+import { isClosedStatus, NEEDS_INFO_STAGE, NEEDS_INFO_STATUS } from "./types";
+import type { Activity, Lead, LeadWithBucket } from "./types";
 
 export type KnockOutcome = {
   key: string;
@@ -170,6 +170,186 @@ export function groupByHousehold(leads: Lead[]): Household[] {
     });
   }
   return out;
+}
+
+// ── knocked history ──────────────────────────────────────────────────────────
+//
+// The other half of a knock list: the doors already worked and what happened at
+// them. The lead row only remembers how many times and on what day, so the
+// result itself comes back out of the activity log.
+
+export type KnockRecord = {
+  /** ISO timestamp of the knock. */
+  at: string;
+  outcome: string;
+  by: string | null;
+  note: string | null;
+};
+
+/** A knock with no logged outcome — an old import, or a log row we never got. */
+export const UNLOGGED_OUTCOME = "Knocked";
+
+// A note is something typed at a door that may not have been dispositioned yet,
+// so it can't stand as the door's result.
+const NOT_A_RESULT = new Set(["Note"]);
+
+/**
+ * What the door-knock undo writes. The phone side logs its own Undo rows
+ * ("Reverted last disposition"), and counting those as knock reversals would
+ * quietly erase a real result on any lead that was both called and knocked.
+ */
+export const KNOCK_UNDO_OUTCOME = "Reverted last door knock";
+
+/**
+ * Newest door-knock outcome per lead id, out of raw activity_log rows.
+ *
+ * Undo doesn't delete anything — the log is append-only, so a reverted knock
+ * leaves its row behind next to an "Undo" row. Pass the Undo rows in and each
+ * one cancels the knock it reverted, otherwise a door you fixed ten seconds
+ * later still reads back as "not interested".
+ */
+export function latestKnockByLead(rows: Activity[]): Map<string, KnockRecord> {
+  const byLead = new Map<string, Activity[]>();
+  for (const r of rows) {
+    if (!r.lead_id || !r.activity_date) continue;
+    if (r.activity_type !== "Door Knock" && r.activity_type !== "Undo") continue;
+    if (!Number.isFinite(Date.parse(r.activity_date))) continue;
+    const arr = byLead.get(r.lead_id);
+    if (arr) arr.push(r);
+    else byLead.set(r.lead_id, [r]);
+  }
+  const out = new Map<string, KnockRecord>();
+  for (const [id, list] of byLead) {
+    // Newest first, so "the knock an undo reverted" is simply the next one down.
+    list.sort((a, b) => Date.parse(b.activity_date as string) - Date.parse(a.activity_date as string));
+    let reverted = 0;
+    for (const r of list) {
+      if (r.activity_type === "Undo") {
+        if (String(r.outcome || "").trim() === KNOCK_UNDO_OUTCOME) reverted += 1;
+        continue;
+      }
+      const outcome = String(r.outcome || "").trim();
+      if (!outcome || NOT_A_RESULT.has(outcome)) continue;
+      if (reverted > 0) {
+        reverted -= 1;
+        continue;
+      }
+      out.set(id, { at: r.activity_date as string, outcome, by: r.logged_by, note: r.notes });
+      break;
+    }
+  }
+  return out;
+}
+
+export type KnockedDoor = {
+  hh: Household;
+  /** What happened last time. Null when the knock predates the activity log. */
+  result: KnockRecord | null;
+  /** Local calendar day of the last knock, YYYY-MM-DD. "" if never recorded. */
+  day: string;
+  /** Most knocks any occupant has taken — the door's count, not the lead's. */
+  knocks: number;
+  /** Resident asked us not to come back. */
+  doNotKnock: boolean;
+  /** Every occupant is closed out, so the door is finished either way. */
+  closed: boolean;
+  /** Sort key: the knock's timestamp where we have one, else noon on its day. */
+  at: number;
+};
+
+/**
+ * Turn worked households into results, newest first.
+ *
+ * The day comes from whichever is later: the log row or the lead's
+ * last_knock_date. They disagree whenever a knock was recorded offline and the
+ * activity row is still sitting in the queue, and in that case the lead row is
+ * the one telling the truth about when someone stood at the door.
+ */
+export function knockedDoors(
+  households: Household[],
+  byLead: Map<string, KnockRecord>
+): KnockedDoor[] {
+  const out: KnockedDoor[] = [];
+  for (const hh of households) {
+    let result: KnockRecord | null = null;
+    for (const o of hh.occupants) {
+      const r = byLead.get(o.id);
+      if (r && (!result || Date.parse(r.at) > Date.parse(result.at))) result = r;
+    }
+    const stamped = hh.occupants
+      .map((o) => (o.last_knock_date || "").slice(0, 10))
+      .filter(Boolean)
+      .sort()
+      .pop();
+    const loggedDay = result ? localYmd(new Date(result.at)) : "";
+    const day = stamped && stamped > loggedDay ? stamped : loggedDay;
+    if (!day) continue; // nothing says this door was ever knocked
+    out.push({
+      hh,
+      result: day === loggedDay ? result : null,
+      day,
+      knocks: Math.max(...hh.occupants.map((o) => o.knock_count || 0), 0),
+      doNotKnock: hh.occupants.some((o) => o.do_not_knock === true),
+      closed: hh.occupants.every((o) => o.stage_bucket === "Closed" || isClosedStatus(o.status)),
+      at:
+        day === loggedDay && result
+          ? Date.parse(result.at)
+          : Date.parse(day + "T12:00:00"),
+    });
+  }
+  out.sort((a, b) => b.at - a.at);
+  return out;
+}
+
+export function knockOutcome(d: KnockedDoor): string {
+  return d.result?.outcome || UNLOGGED_OUTCOME;
+}
+
+/** Counts per outcome, in the order the buttons sit at a door. */
+export function knockOutcomeTally(doors: KnockedDoor[]): Array<{ label: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const d of doors) {
+    const k = knockOutcome(d);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const known = KNOCK_OUTCOMES.map((o) => o.label);
+  const rest = Array.from(counts.keys())
+    .filter((k) => !known.includes(k) && k !== UNLOGGED_OUTCOME)
+    .sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0));
+  return [...known, ...rest, UNLOGGED_OUTCOME]
+    .filter((label) => counts.has(label))
+    .map((label) => ({ label, count: counts.get(label) as number }));
+}
+
+export type KnockDay = { day: string; label: string; doors: KnockedDoor[] };
+
+export function knockDayLabel(day: string): string {
+  const today = todayStr();
+  if (day === today) return "Today";
+  if (day === plusDays(today, -1)) return "Yesterday";
+  const d = new Date(day + "T12:00:00");
+  if (isNaN(d.getTime())) return day;
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/** Group results into days, newest day first. Input must already be sorted. */
+export function groupKnockedByDay(doors: KnockedDoor[]): KnockDay[] {
+  const map = new Map<string, KnockedDoor[]>();
+  for (const d of doors) {
+    const arr = map.get(d.day);
+    if (arr) arr.push(d);
+    else map.set(d.day, [d]);
+  }
+  return Array.from(map.entries()).map(([day, list]) => ({
+    day,
+    label: knockDayLabel(day),
+    doors: list,
+  }));
 }
 
 // ── walking-order grouping ────────────────────────────────────────────────────

@@ -16,6 +16,8 @@ import {
   CalendarClock,
   Bookmark,
   Check,
+  ClipboardList,
+  ChevronDown,
 } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { supabase } from "@/lib/supabaseClient";
@@ -23,16 +25,24 @@ import {
   applyKnock,
   groupByHousehold,
   groupByStreet,
+  groupKnockedByDay,
+  knockedDoors,
+  knockOutcome,
+  knockOutcomeTally,
+  latestKnockByLead,
   multiUnitAddressKeys,
   KNOCK_OUTCOMES,
+  KNOCK_UNDO_OUTCOME,
   type KnockOutcome,
+  type KnockRecord,
+  type KnockedDoor,
   type Household,
 } from "@/lib/knock";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
 import { setAppointment } from "@/lib/dispositions";
 import { scheduleFollowUp } from "@/lib/actions";
 import { writeOrQueue } from "@/lib/offline";
-import { logActivity, todayStr } from "@/lib/sequences";
+import { logActivity, plusDays, todayStr } from "@/lib/sequences";
 import { iepPhase, monthsToBirthdayMonth } from "@/lib/priority";
 import {
   planRoute,
@@ -70,7 +80,7 @@ import {
   type Occupancy,
 } from "@/lib/valueBands";
 import { ACTION_ASSIGNEES, askedNotToBeCalled, needsInfo } from "@/lib/types";
-import type { ActionAssignee, LeadWithBucket } from "@/lib/types";
+import type { ActionAssignee, Activity, LeadWithBucket } from "@/lib/types";
 
 // datetime-local wants "YYYY-MM-DDTHH:MM" in LOCAL time — toISOString() would
 // shift an evening follow-up onto the wrong day.
@@ -108,8 +118,40 @@ type KnockUndo = {
   prior: Array<{ id: string } & Record<string, unknown>>;
 };
 
+// How far back the results view looks. 30 days is a knocking cadence: long
+// enough to hold a couple of weekends, short enough that today's work is still
+// near the top. 0 means everything ever knocked.
+const KNOCKED_WINDOWS: Array<{ days: number; label: string }> = [
+  { days: 7, label: "Last 7 days" },
+  { days: 30, label: "Last 30 days" },
+  { days: 90, label: "Last 90 days" },
+  { days: 0, label: "All time" },
+];
+
+/** Colour by what the result means, not by which button was pressed. */
+function outcomeTone(label: string): string {
+  if (label === "Talked - Interested" || label.startsWith("Appointment"))
+    return "bg-newlead-50 text-newlead border-newlead/30";
+  if (label === "Follow-up scheduled" || label === "Talked - Not Ready")
+    return "bg-brand-light text-brand-dark border-brand/30";
+  if (label === "Closed - Not Interested" || label === "Do not knock")
+    return "bg-due-50 text-due border-due/30";
+  if (label === "Wrong info") return "bg-overdue-50 text-overdue border-overdue/30";
+  return "bg-paper text-worked border-line";
+}
+
+/** "4:46 PM" — the time alone; the day is already the section heading. */
+function clockTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 export default function KnockPage() {
   const { leads, leadsLoading, me, reload } = useApp();
+  // Two halves of the same book: the doors still to knock, and the doors
+  // already knocked with what happened at them.
+  const [view, setView] = useState<"todo" | "knocked">("todo");
   // Multi-pick filters. An EMPTY array means "no restriction" — an untouched
   // filter must never hide a door.
   const [cities, setCities] = useState<string[]>([]);
@@ -125,6 +167,20 @@ export default function KnockPage() {
   const [t65Filter, setT65Filter] = useState<"all" | "soon" | "iep">("all");
   const [phoneFilter, setPhoneFilter] = useState<"all" | "callable" | "dnc">("all");
   const [showKnockedToday, setShowKnockedToday] = useState(false);
+  // Results view: how far back to look, which outcome to isolate, how many to
+  // draw, and the log rows themselves (fetched only when the view is opened).
+  const [knockedDays, setKnockedDays] = useState(30);
+  const [outcomeFilter, setOutcomeFilter] = useState<string | null>(null);
+  const [knockedLimit, setKnockedLimit] = useState(60);
+  const [knockLog, setKnockLog] = useState<Activity[] | null>(null);
+  const [logErr, setLogErr] = useState<string | null>(null);
+  const [logNonce, setLogNonce] = useState(0);
+  // Results recorded in this sitting, before the log has been re-read. Without
+  // these, knocking a door from the results view leaves it showing the outcome
+  // you just replaced.
+  const [justKnocked, setJustKnocked] = useState<Map<string, KnockRecord>>(new Map());
+  // Doors in the results list whose knock buttons are open.
+  const [reopened, setReopened] = useState<Set<string>>(new Set());
   const [done, setDone] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [lastUndo, setLastUndo] = useState<KnockUndo | null>(null);
@@ -255,6 +311,17 @@ export default function KnockPage() {
     [leads]
   );
 
+  // Everything ever knocked, INCLUDING the doors the knock took off the
+  // knockable list. "Not interested", "do not knock" and "wrong info" are
+  // results — hiding them here would hide the outcomes worth reading.
+  const knockedPool = useMemo(
+    () => leads.filter((l) => (l.knock_count || 0) > 0 || l.last_knock_date || justKnocked.has(l.id)),
+    [leads, justKnocked]
+  );
+
+  // Town / ZIP / list menus describe whichever half of the book is on screen.
+  const optionPool = view === "knocked" ? knockedPool : knockable;
+
   // Counts next to each option: you can see a ZIP holds 12 doors before you
   // pick it, instead of selecting it and watching the list go empty.
   const tally = (items: string[]) => {
@@ -264,34 +331,37 @@ export default function KnockPage() {
   };
 
   const cityOptions = useMemo(() => {
-    const counts = tally(knockable.map((l) => (l.city || "Unknown city").trim()));
+    const counts = tally(optionPool.map((l) => (l.city || "Unknown city").trim()));
     return Array.from(counts.keys())
       .sort()
       .map((c) => ({ value: c, label: c, count: counts.get(c) }));
-  }, [knockable]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionPool]);
 
   // Lists a door can belong to: where it came from (source) plus any list tag
   // added by a later import. One lead can appear under several.
   const listOptions = useMemo(() => {
     const counts = tally([
-      ...knockable.map((l) => normalizeSource(l.source)),
-      ...knockable.flatMap((l) => l.tags || []),
+      ...optionPool.map((l) => normalizeSource(l.source)),
+      ...optionPool.flatMap((l) => l.tags || []),
     ]);
     return Array.from(counts.keys())
       .sort()
       .map((v) => ({ value: v, label: v, count: counts.get(v) }));
-  }, [knockable]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionPool]);
 
   // ZIPs narrow to the towns you've picked, so the menu stays short.
   const zipOptions = useMemo(() => {
     const pool = cities.length
-      ? knockable.filter((l) => cities.includes((l.city || "Unknown city").trim()))
-      : knockable;
+      ? optionPool.filter((l) => cities.includes((l.city || "Unknown city").trim()))
+      : optionPool;
     const counts = tally(pool.map((l) => (l.zip || "").trim()).filter(Boolean));
     return Array.from(counts.keys())
       .sort()
       .map((z) => ({ value: z, label: z, count: counts.get(z) }));
-  }, [knockable, cities]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionPool, cities]);
 
   const monthOptions = useMemo(() => {
     const counts = tally(
@@ -411,6 +481,97 @@ export default function KnockPage() {
       .sort((a, b) => a.miles - b.miles);
   }, [households, radius, here]);
 
+  // ── what we already knocked ────────────────────────────────────────────────
+  //
+  // The lead row remembers how many knocks and on what day. WHAT HAPPENED is in
+  // the activity log, so the results view reads it — and only when it's opened,
+  // because the field path is the one that has to stay fast on a phone.
+
+  useEffect(() => {
+    if (view !== "knocked") return;
+    let cancelled = false;
+    setKnockLog(null);
+    setLogErr(null);
+    let q = supabase
+      .from("activity_log")
+      .select("id, lead_id, activity_type, activity_date, outcome, notes, logged_by")
+      // Undo rows come too — they're what cancels a knock that was reverted.
+      .in("activity_type", ["Door Knock", "Undo"])
+      .order("activity_date", { ascending: false })
+      .limit(10000);
+    if (knockedDays > 0) {
+      const since = new Date();
+      since.setDate(since.getDate() - knockedDays);
+      q = q.gte("activity_date", since.toISOString());
+    }
+    q.then(({ data, error }) => {
+      if (cancelled) return;
+      // A failed fetch still leaves the doors listed off the lead rows — you
+      // lose the outcome text, not the fact that the house was knocked.
+      if (error) setLogErr("Couldn't load the outcomes, so these doors show as knocked only.");
+      setKnockLog((data as Activity[]) || []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, knockedDays, logNonce]);
+
+  // Log rows plus anything knocked in this sitting, newest per lead.
+  const knockResults = useMemo(() => {
+    const m = latestKnockByLead(knockLog || []);
+    for (const [id, rec] of justKnocked) {
+      const prev = m.get(id);
+      if (!prev || Date.parse(prev.at) < Date.parse(rec.at)) m.set(id, rec);
+    }
+    return m;
+  }, [knockLog, justKnocked]);
+
+  // Geography and list filters carry across from the knock list — same book,
+  // same towns. Value, occupancy and T65 filters deliberately do NOT: a result
+  // you recorded should never be hidden by a targeting filter.
+  const knockedFiltered = useMemo(() => {
+    let q = knockedPool;
+    if (cities.length) q = q.filter((l) => cities.includes((l.city || "Unknown city").trim()));
+    if (zips.length) q = q.filter((l) => zips.includes((l.zip || "").trim()));
+    if (lists.length)
+      q = q.filter(
+        (l) => lists.includes(normalizeSource(l.source)) || (l.tags || []).some((t) => lists.includes(t))
+      );
+    return q;
+  }, [knockedPool, cities, zips, lists]);
+
+  const knockedInWindow = useMemo(() => {
+    const all = knockedDoors(groupByHousehold(knockedFiltered), knockResults);
+    if (knockedDays === 0) return all;
+    const cutoff = plusDays(todayStr(), -knockedDays);
+    return all.filter((d) => d.day >= cutoff);
+  }, [knockedFiltered, knockResults, knockedDays]);
+
+  const knockedTally = useMemo(() => knockOutcomeTally(knockedInWindow), [knockedInWindow]);
+
+  const knockedShown = useMemo(
+    () => (outcomeFilter ? knockedInWindow.filter((d) => knockOutcome(d) === outcomeFilter) : knockedInWindow),
+    [knockedInWindow, outcomeFilter]
+  );
+
+  const knockedDayGroups = useMemo(
+    () => groupKnockedByDay(knockedShown.slice(0, knockedLimit)),
+    [knockedShown, knockedLimit]
+  );
+
+  // The tab badge: every door ever knocked, whatever the window says. Counted
+  // off the lead rows so it's there before the log loads.
+  const knockedEver = useMemo(() => groupByHousehold(knockedPool).length, [knockedPool]);
+
+  /** Remember a result locally so the list re-sorts under Today straight away. */
+  function recordLocally(hh: Household, outcome: string, note: string | null) {
+    const at = new Date().toISOString();
+    setJustKnocked((prev) => {
+      const next = new Map(prev);
+      for (const o of hh.occupants) next.set(o.id, { at, outcome, by: me, note });
+      return next;
+    });
+  }
 
   // ── saved routes ───────────────────────────────────────────────────────────
 
@@ -564,6 +725,13 @@ export default function KnockPage() {
         if (res === "queued") queued = true;
       }
       setDone((set) => new Set(set).add(hh.key));
+      recordLocally(hh, o.label, null);
+      setReopened((set) => {
+        if (!set.has(hh.key)) return set;
+        const n = new Set(set);
+        n.delete(hh.key);
+        return n;
+      });
       setLastUndo({
         key: hh.key,
         name: `${hh.primary.name || "lead"} — ${o.label}`,
@@ -602,7 +770,7 @@ export default function KnockPage() {
           payload: {
             lead_id: id,
             activity_type: "Undo",
-            outcome: "Reverted last door knock",
+            outcome: KNOCK_UNDO_OUTCOME,
             logged_by: me,
             activity_date: new Date().toISOString(),
           },
@@ -612,6 +780,13 @@ export default function KnockPage() {
       setDone((set) => {
         const n = new Set(set);
         n.delete(lastUndo.key);
+        return n;
+      });
+      // Drop the local result too, so the results view stops showing an outcome
+      // that no longer stands.
+      setJustKnocked((prev) => {
+        const n = new Map(prev);
+        for (const p of lastUndo.prior) n.delete(p.id);
         return n;
       });
       setLastUndo(null);
@@ -716,6 +891,7 @@ ${prior}` : entry,
         });
       }
       setDone((set) => new Set(set).add(hh.key));
+      recordLocally(hh, "Follow-up scheduled", followNote.trim() || null);
       setFollowFor(null);
       setFollowNote("");
       if (res === "queued") {
@@ -740,6 +916,7 @@ ${prior}` : entry,
       await setAppointment(hh.primary as LeadWithBucket, apptWhen, me);
       await logActivity(hh.primary.id, "Door Knock", "Appointment set at the door", null, me);
       setDone((set) => new Set(set).add(hh.key));
+      recordLocally(hh, "Appointment set at the door", null);
       setApptFor(null);
       setApptWhen("");
     } catch (e) {
@@ -752,6 +929,8 @@ ${prior}` : entry,
   }
 
   const doorsLabel = `${households.length} door${households.length === 1 ? "" : "s"} · ${groups.length} street${groups.length === 1 ? "" : "s"}`;
+  const windowLabel = (KNOCKED_WINDOWS.find((w) => w.days === knockedDays) || KNOCKED_WINDOWS[1]).label.toLowerCase();
+  const knockedLabel = `${knockedInWindow.length} door${knockedInWindow.length === 1 ? "" : "s"} knocked · ${windowLabel}`;
 
   // Ask first (RoutePlanner), then build. The plan decides where the day ends,
   // how many doors, and the mileage ceiling — all three change the answer.
@@ -899,7 +1078,6 @@ ${prior}` : entry,
     const mapsUrl =
       "https://maps.google.com/?q=" +
       encodeURIComponent(hh.address + ", " + (hh.city || "") + " NC " + (lead.zip || ""));
-    const noteHistory = (lead.raw_notes || lead.notes || "").trim();
 
     return (
       <article
@@ -984,6 +1162,21 @@ ${prior}` : entry,
           )}
         </div>
 
+        {renderActions(hh)}
+      </article>
+    );
+  }
+
+  /**
+   * The one-tap outcome grid and the appointment / follow-up / note panels.
+   * Shared with the results view, where a door you already worked gets
+   * re-dispositioned after a second conversation.
+   */
+  function renderActions(hh: Household) {
+    const lead = hh.primary as LeadWithBucket;
+    const noteHistory = (lead.raw_notes || lead.notes || "").trim();
+    return (
+      <>
         <div className="mt-2.5 grid grid-cols-3 gap-1.5">
           {KNOCK_OUTCOMES.map((o) => (
             <button
@@ -1162,6 +1355,132 @@ ${prior}` : entry,
             </div>
           </div>
         )}
+      </>
+    );
+  }
+
+  /**
+   * A door already worked, read back: what happened, when, who logged it, and
+   * what was said. The knock buttons are one tap away rather than on screen —
+   * this is a list you read, not one you work, right up until the moment you're
+   * standing at the same door again.
+   */
+  function renderResult(d: KnockedDoor) {
+    const hh = d.hh;
+    const lead = hh.primary as LeadWithBucket;
+    const others = hh.occupants.filter((o) => o.id !== lead.id);
+    const outcome = knockOutcome(d);
+    const rec = d.result;
+    const open = reopened.has(hh.key);
+    const anyDnc = hh.occupants.some((o) => askedNotToBeCalled(o));
+    const dialable = hh.occupants.find((o) => o.phone);
+    const street = String(hh.address || "").split(",")[0] || "No address on file";
+    const mapsUrl =
+      "https://maps.google.com/?q=" +
+      encodeURIComponent(hh.address + ", " + (hh.city || "") + " NC " + (lead.zip || ""));
+
+    return (
+      <article key={hh.key} className="rounded-2xl border border-line bg-white p-3.5 shadow-card">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-[15px] font-semibold text-ink">{lead.name || "Unnamed"}</p>
+            {others.length > 0 && (
+              <p className="truncate text-xs text-worked">
+                also here: {others.map((o) => o.name || "unnamed").join(", ")}
+              </p>
+            )}
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-0.5 flex items-center gap-1 text-sm text-brand underline-offset-2 hover:underline"
+            >
+              <MapPin size={13} className="shrink-0" aria-hidden />
+              <span className="truncate">
+                {street}
+                {hh.city ? ` · ${hh.city}` : ""}
+              </span>
+            </a>
+          </div>
+          <span
+            className={
+              "shrink-0 rounded-lg border px-2 py-1 text-[11px] font-semibold " + outcomeTone(outcome)
+            }
+          >
+            {outcome === "Closed - Not Interested" ? "Not interested" : outcome.replace("Talked - ", "")}
+          </span>
+        </div>
+
+        <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="text-later tabular-nums">
+            {rec ? clockTime(rec.at) : "time not logged"}
+            {rec?.by ? ` · ${rec.by}` : ""}
+          </span>
+          {d.knocks > 1 && (
+            <span className="rounded-md bg-paper px-1.5 py-0.5 text-later">{d.knocks} knocks</span>
+          )}
+          <T65Badge birthday={lead.birthday} verbose />
+          {anyDnc && (
+            <span className="rounded-md bg-due-50 px-1.5 py-0.5 font-medium text-due">Phone DNC</span>
+          )}
+          {d.closed && !d.doNotKnock && (
+            <span className="rounded-md bg-paper px-1.5 py-0.5 font-medium text-later">Closed out</span>
+          )}
+        </p>
+
+        {rec?.note && (
+          <p className="mt-1.5 rounded-lg bg-paper/70 px-2.5 py-1.5 text-xs leading-relaxed text-worked">
+            {rec.note}
+          </p>
+        )}
+
+        {/* Two things belong on a result card: the number, in case the answer
+            was "call me", and the way back into the outcome buttons. */}
+        <div className="mt-2 flex items-center gap-1.5">
+          {d.doNotKnock ? (
+            <p className="flex-1 rounded-xl border border-due/40 bg-due-50 px-2.5 py-2 text-xs font-medium text-due">
+              Asked us not to come back — this door stays off every route.
+            </p>
+          ) : (
+            <button
+              onClick={() =>
+                setReopened((set) => {
+                  const n = new Set(set);
+                  if (n.has(hh.key)) n.delete(hh.key);
+                  else n.add(hh.key);
+                  return n;
+                })
+              }
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-line bg-paper px-3 py-2 text-xs font-medium text-worked active:scale-[0.99]"
+            >
+              <ChevronDown
+                size={13}
+                aria-hidden
+                className={open ? "rotate-180 transition-transform" : "transition-transform"}
+              />
+              {open ? "Hide" : "Knock again or change the result"}
+            </button>
+          )}
+          {dialable?.phone && (
+            <a
+              href={"tel:" + dialable.phone}
+              className={
+                askedNotToBeCalled(dialable)
+                  ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-due/40 bg-due-50 text-due"
+                  : "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line text-worked hover:bg-paper"
+              }
+              title={
+                askedNotToBeCalled(dialable)
+                  ? dialable.phone + " — this person asked not to be called."
+                  : String(dialable.phone)
+              }
+            >
+              <Phone size={16} aria-hidden />
+            </a>
+          )}
+        </div>
+
+        {open && !d.doNotKnock && renderActions(hh)}
       </article>
     );
   }
@@ -1171,34 +1490,38 @@ ${prior}` : entry,
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <div>
           <h1 className="font-display text-2xl font-semibold text-ink">Door Knock</h1>
-          <p className="text-sm text-worked tabular-nums">{leadsLoading ? "Loading…" : doorsLabel}</p>
+          <p className="text-sm text-worked tabular-nums">
+            {leadsLoading ? "Loading…" : view === "knocked" ? knockedLabel : doorsLabel}
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {route === null ? (
-            <button
-              onClick={openPlanner}
-              disabled={locating || households.length === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
-            >
-              <Navigation size={13} aria-hidden />
-              {locating ? "Building…" : "Plan route"}
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                setRoute(null);
-                setRouteNote(null);
-                setNaming(false);
-              }}
-              className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-worked hover:bg-paper"
-            >
-              Back to street list
-            </button>
-          )}
+          {view === "todo" &&
+            (route === null ? (
+              <button
+                onClick={openPlanner}
+                disabled={locating || households.length === 0}
+                className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+              >
+                <Navigation size={13} aria-hidden />
+                {locating ? "Building…" : "Plan route"}
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setRoute(null);
+                  setRouteNote(null);
+                  setNaming(false);
+                }}
+                className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-worked hover:bg-paper"
+              >
+                Back to street list
+              </button>
+            ))}
           <button
             onClick={() => {
               setDone(new Set());
               setRoute(null);
+              setLogNonce((n) => n + 1);
               reload();
             }}
             className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-worked hover:bg-paper"
@@ -1206,6 +1529,33 @@ ${prior}` : entry,
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* The two halves. A door leaves the left tab the moment it's knocked and
+          turns up on the right with what happened at it. */}
+      <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-line bg-white p-1">
+        {(
+          [
+            { key: "todo", label: "To knock", icon: DoorOpen, count: households.length },
+            { key: "knocked", label: "Knocked", icon: ClipboardList, count: knockedEver },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setView(t.key)}
+            className={
+              view === t.key
+                ? "flex items-center justify-center gap-1.5 rounded-lg bg-brand px-3 py-2.5 text-sm font-semibold text-white"
+                : "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-medium text-worked hover:bg-paper"
+            }
+          >
+            <t.icon size={14} aria-hidden />
+            {t.label}
+            <span className={view === t.key ? "tabular-nums text-white/80" : "tabular-nums text-later"}>
+              {leadsLoading ? "" : t.count.toLocaleString()}
+            </span>
+          </button>
+        ))}
       </div>
 
       {routeErr && (
@@ -1224,7 +1574,7 @@ ${prior}` : entry,
           every path out of route view — a filter tap, "back to street list", a
           reload, the tab being closed — so a planned route is never something
           you have to rebuild from memory. */}
-      {route === null && routeRec && !leadsLoading && remainingCount(routeRec) > 0 && (
+      {view === "todo" && route === null && routeRec && !leadsLoading && remainingCount(routeRec) > 0 && (
         <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-brand/30 bg-brand-light/40 px-4 py-3">
           <div className="min-w-0">
             <p className="truncate font-display text-base font-semibold text-ink">
@@ -1257,14 +1607,14 @@ ${prior}` : entry,
         </div>
       )}
 
-      {pricedOut > 0 && (
+      {view === "todo" && pricedOut > 0 && (
         <p className="mb-3 text-[11px] text-later">
           {pricedOut.toLocaleString()} door{pricedOut === 1 ? "" : "s"} hidden by the value and
           occupancy filters. {band === "upto750" ? "Houses over $750k are their own band — worth a call about an annuity, not a cold knock." : ""}
         </p>
       )}
 
-      {unmapped > 0 && (
+      {view === "todo" && unmapped > 0 && (
         <p className="mb-3 text-[11px] text-later">
           {unmapped} of these doors have no map position (PO boxes, or an address the county
           couldn&apos;t match), so they appear in the street list but never in a route.
@@ -1273,6 +1623,36 @@ ${prior}` : entry,
 
       {/* One tap for the door that actually buys: a house in the range, an
           owner who lives in it, and a 65th birthday close enough to matter. */}
+      {view === "knocked" ? (
+        <div className="mb-2 flex gap-2">
+          <select
+            aria-label="How far back to show results"
+            value={knockedDays}
+            onChange={(e) => {
+              setKnockedDays(Number(e.target.value));
+              setKnockedLimit(60);
+            }}
+            className="flex-1 rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink"
+          >
+            {KNOCKED_WINDOWS.map((w) => (
+              <option key={w.days} value={w.days}>
+                {w.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => {
+              setCities([]);
+              setZips([]);
+              setLists([]);
+              setOutcomeFilter(null);
+            }}
+            className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-worked active:scale-[0.98]"
+          >
+            Clear filters
+          </button>
+        </div>
+      ) : (
       <div className="mb-2 flex gap-2">
         <button
           onClick={() => {
@@ -1302,6 +1682,7 @@ ${prior}` : entry,
           Clear filters
         </button>
       </div>
+      )}
 
       {/* Field filters — big touch targets, minimal typing */}
       <div className="mb-4 grid grid-cols-2 gap-2">
@@ -1318,7 +1699,7 @@ ${prior}` : entry,
               z.filter(
                 (v) =>
                   next.length === 0 ||
-                  knockable.some(
+                  optionPool.some(
                     (l) =>
                       next.includes((l.city || "Unknown city").trim()) && (l.zip || "").trim() === v
                   )
@@ -1328,6 +1709,11 @@ ${prior}` : entry,
         />
         <MultiSelect label="ZIP" allLabel="All ZIPs" options={zipOptions} selected={zips} onChange={setZips} />
         <MultiSelect label="list" allLabel="All lists" options={listOptions} selected={lists} onChange={setLists} />
+        {/* Value, occupancy, birth month, T65 and phone are targeting filters:
+            they decide who to go see. A door already knocked has a result
+            whatever they say about it, so the results view leaves them out
+            rather than hiding work behind a filter set for a different job. */}
+        {view === "todo" && (
         <MultiSelect
           label="month"
           allLabel="Any birth month"
@@ -1336,8 +1722,11 @@ ${prior}` : entry,
           onChange={setMonths}
           searchable={false}
         />
+        )}
         {/* What are we knocking? Counts are live, so you can see the band is
             worth a trip before you drive to it. */}
+        {view === "todo" && (
+        <>
         <select
           aria-label="Filter by home value"
           value={band}
@@ -1431,6 +1820,8 @@ ${prior}` : entry,
             Keep unpriced doors
           </label>
         )}
+        </>
+        )}
       </div>
 
       {lastUndo && (
@@ -1446,8 +1837,95 @@ ${prior}` : entry,
         </div>
       )}
 
+      {/* Results: every door already knocked, newest day first, with what
+          happened at it. Doors that got closed out, marked do-not-knock or
+          flagged wrong-info are HERE — they're gone from the knock list, but
+          they're the outcomes most worth reading back. */}
+      {view === "knocked" && (
+        <div className="mb-4">
+          {logErr && (
+            <p className="mb-3 rounded-xl border border-line bg-white px-3.5 py-2.5 text-xs text-worked">
+              {logErr}
+            </p>
+          )}
+
+          {knockedTally.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setOutcomeFilter(null)}
+                className={
+                  outcomeFilter === null
+                    ? "rounded-lg border border-brand bg-brand px-2.5 py-1.5 text-xs font-semibold text-white"
+                    : "rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked"
+                }
+              >
+                All {knockedInWindow.length}
+              </button>
+              {knockedTally.map((t) => (
+                <button
+                  key={t.label}
+                  onClick={() => {
+                    setOutcomeFilter(outcomeFilter === t.label ? null : t.label);
+                    setKnockedLimit(60);
+                  }}
+                  className={
+                    "rounded-lg border px-2.5 py-1.5 text-xs font-medium " +
+                    (outcomeFilter === t.label
+                      ? "border-brand bg-brand text-white"
+                      : outcomeTone(t.label))
+                  }
+                >
+                  {t.label === "Closed - Not Interested"
+                    ? "Not interested"
+                    : t.label.replace("Talked - ", "")}{" "}
+                  <span className="tabular-nums">{t.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {knockLog === null && !leadsLoading && (
+            <p className="mb-3 text-xs text-later">Reading back what happened at these doors…</p>
+          )}
+
+          {knockedDayGroups.map((g) => (
+            <section key={g.day} className="mb-4">
+              <h2 className="sticky top-14 z-10 mb-1.5 flex items-baseline gap-2 rounded-lg bg-paper/95 px-1 py-1 backdrop-blur">
+                <span className="font-display text-base font-semibold text-ink">{g.label}</span>
+                <span className="text-xs text-later tabular-nums">
+                  {g.doors.length} door{g.doors.length === 1 ? "" : "s"}
+                </span>
+              </h2>
+              <div className="space-y-2">{g.doors.map((d) => renderResult(d))}</div>
+            </section>
+          ))}
+
+          {knockedLimit < knockedShown.length && (
+            <button
+              onClick={() => setKnockedLimit((v) => v + 60)}
+              className="mb-4 w-full rounded-xl border border-line bg-white py-3 text-sm text-worked hover:bg-paper"
+            >
+              Show more ({(knockedShown.length - knockedLimit).toLocaleString()} left)
+            </button>
+          )}
+
+          {!leadsLoading && knockedShown.length === 0 && (
+            <div className="rounded-2xl border border-line bg-white p-10 text-center shadow-card">
+              <ClipboardList className="mx-auto mb-2 text-later" size={24} aria-hidden />
+              <p className="text-sm text-later">
+                {knockedEver === 0
+                  ? "No doors knocked yet. Work a route from the To knock tab and every result lands here."
+                  : outcomeFilter
+                    ? `No doors with that result in the ${windowLabel}. Tap All, or widen the window.`
+                    : `Nothing knocked in the ${windowLabel} that matches these filters. Try a longer window or clear the town filter.`}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Near me — the gap-time view: closest door first, re-sorts as you drive */}
-      {radius > 0 && route === null && (
+      {view === "todo" && radius > 0 && route === null && (
         <div className="mb-4">
           <div className="mb-3 flex items-center justify-between rounded-2xl border border-brand/30 bg-brand-light/40 px-4 py-3">
             <div>
@@ -1490,7 +1968,7 @@ ${prior}` : entry,
         </div>
       )}
 
-      {route !== null && routeStart && (
+      {view === "todo" && route !== null && routeStart && (
         <div className="mb-4">
           <div className="mb-3 rounded-2xl border border-line bg-white p-4 shadow-card">
             <p className="font-display text-base font-semibold text-ink">
@@ -1613,7 +2091,7 @@ ${prior}` : entry,
         </div>
       )}
 
-      {route === null && radius === 0 && groups.slice(0, streetLimit).map((g) => (
+      {view === "todo" && route === null && radius === 0 && groups.slice(0, streetLimit).map((g) => (
         <section key={`${g.city}|${g.street}`} className="mb-4">
           <h2 className="sticky top-14 z-10 mb-1.5 flex items-baseline gap-2 rounded-lg bg-paper/95 px-1 py-1 backdrop-blur">
             <span className="font-display text-base font-semibold text-ink">{g.street}</span>
@@ -1627,7 +2105,7 @@ ${prior}` : entry,
         </section>
       ))}
 
-      {route === null && radius === 0 && streetLimit < groups.length && (
+      {view === "todo" && route === null && radius === 0 && streetLimit < groups.length && (
         <button
           onClick={() => setStreetLimit((v) => v + 25)}
           className="mb-4 w-full rounded-xl border border-line bg-white py-3 text-sm text-worked hover:bg-paper"
@@ -1636,7 +2114,7 @@ ${prior}` : entry,
         </button>
       )}
 
-      {route === null && radius === 0 && !leadsLoading && households.length === 0 && (
+      {view === "todo" && route === null && radius === 0 && !leadsLoading && households.length === 0 && (
         <div className="rounded-2xl border border-line bg-white p-10 text-center shadow-card">
           <DoorOpen className="mx-auto mb-2 text-later" size={24} />
           <p className="text-sm text-later">
