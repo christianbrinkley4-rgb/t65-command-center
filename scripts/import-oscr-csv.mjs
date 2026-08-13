@@ -240,9 +240,20 @@ async function main() {
       // different from the one already on file (the same number arrives in two
       // formats constantly, and a "2nd" button that redials the first is worse
       // than no button at all).
-      if (!match.phone2 && r["Secondary phone"]) {
-        const alt = canonPhone(r["Secondary phone"]);
-        if (alt && alt !== canonPhone(match.phone)) patch.phone2 = r["Secondary phone"];
+      //
+      // BOTH of the file's numbers are candidates, not just the secondary one.
+      // A lead is often matched BY the file's secondary — that's the number the
+      // tracker had — and looking only at "Secondary phone" then finds it
+      // already on file and stops, quietly throwing the file's primary away.
+      // That left 123 people across the seven 2026/27 lists holding one line
+      // when the list carried two.
+      if (!match.phone2) {
+        const onFile = new Set([canonPhone(match.phone), canonPhone(match.phone2)].filter(Boolean));
+        const spare = [r["Secondary phone"], r["Primary phone"]].find((v) => {
+          const d = canonPhone(v);
+          return d && !onFile.has(d);
+        });
+        if (spare) patch.phone2 = spare;
       }
       if (isDnc && !match.do_not_call) stats.dncSet++;
       updates.push({ id: match.id, patch });

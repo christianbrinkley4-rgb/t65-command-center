@@ -176,15 +176,32 @@ async function main() {
 
   const totals = { rows: 0, landed: 0, missing: 0, unlabeled: 0, oneNumberOnly: 0, two: 0 };
 
-  /** One list against the book. `claimed` is per file, exactly as the import ran. */
+  /**
+   * A CSV can hold several months. refresh-lists.mjs merges every workbook into
+   * one file before importing, and taking the list name from the first row then
+   * measured all twelve thousand rows against "T65 November" — which reported
+   * 4,650 correctly filed people as unlabeled. The label question is per list,
+   * so the rows are split by their own `Lead source` first.
+   */
   function checkOne(file) {
-  const incoming = parseCsv(toCsv(file));
-  if (incoming.length === 0) {
-    console.log(`\n${file}: no rows. Skipped.`);
-    return;
+    const rows = parseCsv(toCsv(file));
+    if (rows.length === 0) {
+      console.log(`\n${file}: no rows. Skipped.`);
+      return;
+    }
+    const forced = listArg > -1 ? process.argv[listArg + 1] : null;
+    const groups = new Map();
+    for (const r of rows) {
+      const k = forced || r["Lead source"] || "";
+      const arr = groups.get(k);
+      if (arr) arr.push(r);
+      else groups.set(k, [r]);
+    }
+    for (const [listName, incoming] of groups) checkList(listName, incoming);
   }
-  // The converter stamps the list on every row, so the file names itself.
-  const listName = listArg > -1 ? process.argv[listArg + 1] : incoming[0]["Lead source"] || "";
+
+  /** One list against the book. `claimed` is per list, exactly as the import ran. */
+  function checkList(listName, incoming) {
   const tag = listTagFor(listName);
   console.log(`\n${"=".repeat(72)}\n${incoming.length} rows, list "${listName}" (tag ${tag})`);
 
