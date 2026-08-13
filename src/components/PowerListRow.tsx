@@ -91,6 +91,15 @@ export default function PowerListRow({
       }
     }
     if ((lead.dials_count || 0) > 0) bits.push(`${lead.dials_count} dials`);
+    // Knocks are work too, and until now the only screen that knew about them
+    // was Door Knock mode. A lead someone stood in front of twice reads as
+    // never-worked here without this.
+    if ((lead.knock_count || 0) > 0) {
+      const when = lead.last_knock_date
+        ? ` ${new Date(String(lead.last_knock_date).slice(0, 10) + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+        : "";
+      bits.push(`${lead.knock_count} knock${lead.knock_count === 1 ? "" : "s"}${when}`);
+    }
     return bits.join(" · ");
   })();
   const trusted = trustedHomeValue(lead, sharedAddress);
@@ -232,6 +241,17 @@ export default function PowerListRow({
                 title="Flagged by a bulk list scrub, not by the person. Nobody asked."
               >
                 DNC list
+              </span>
+            )}
+            {/* The door's own compliance flag. Nothing to do with the phone:
+                a phone-DNC lead is often the best door to knock, and this one
+                is the reverse of that. */}
+            {lead.do_not_knock && (
+              <span
+                className="rounded bg-due-50 px-1.5 py-0.5 text-[10px] font-semibold text-due"
+                title="Asked us not to come back to the door. Their phone is a separate question."
+              >
+                do not knock
               </span>
             )}
             {(lead.tags || []).slice(0, 3).map((t) => (

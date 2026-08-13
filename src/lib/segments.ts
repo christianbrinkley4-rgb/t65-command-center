@@ -143,6 +143,21 @@ export const SEGMENTS: Segment[] = [
     on: ["list"],
   },
   {
+    key: "knocked",
+    label: "Knocked",
+    source: "book",
+    // The book, not the queue, and deliberately so. A door knock closes leads
+    // ("not interested"), takes them off the knock list ("do not knock") or
+    // flags the record as wrong, and every one of those is a RESULT you need to
+    // be able to look up. Running this through the callable queue would hide
+    // exactly the outcomes worth reading.
+    match: (l) => (l.knock_count || 0) > 0 || Boolean(l.last_knock_date),
+    sort: (a, b) => String(b.last_knock_date || "").localeCompare(String(a.last_knock_date || "")),
+    blurb:
+      "Every door you've already knocked, most recent first, including the ones a knock closed or marked do not knock. Open a lead to read what was said at the door. Door Knock mode has the same list grouped by day with the outcome on each card.",
+    on: ["list"],
+  },
+  {
     key: "talked",
     label: "Talked before",
     source: "queue",
