@@ -166,6 +166,6 @@ async function main() {
 if (process.argv[1] && process.argv[1].endsWith("audit-t65-year.mjs")) {
   main().catch((e) => {
     console.error(e.message || e);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }

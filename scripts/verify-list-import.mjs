@@ -319,6 +319,9 @@ async function main() {
 if (process.argv[1] && process.argv[1].endsWith("verify-list-import.mjs")) {
   main().catch((e) => {
     console.error("\n" + (e.message || e));
-    process.exit(1);
+    // Not process.exit(): killing the process while its stdio is piped to a
+    // parent trips a libuv assertion on Windows, which turns a clean "wrong
+    // password" into a crash dump.
+    process.exitCode = 1;
   });
 }
