@@ -80,19 +80,42 @@ def birthday_of(raw, month, year):
     return ""
 
 
+NEED = {"FirstName", "LastName", "HomeStreet"}
+
+
+def find_sheet(wb):
+    """The sheet holding the list, which is not always the first one.
+
+    The February file arrives as three sheets: an empty `Sheet2` first, the
+    1,673 real rows on `NC`, then an empty `Sheet1`. Reading worksheet zero
+    found nothing, and the whole month silently converted to zero leads. So the
+    sheet is chosen by its HEADER, not its position.
+    """
+    for ws in wb.worksheets:
+        rows = ws.iter_rows(values_only=True)
+        try:
+            header = [text(h) for h in next(rows)]
+        except StopIteration:
+            continue
+        if NEED.issubset({h for h in header if h}):
+            return ws, header
+    return None, []
+
+
 def convert(path, out_rows):
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-    ws = wb.worksheets[0]
+    ws, header = find_sheet(wb)
+    if ws is None:
+        wb.close()
+        raise SystemExit(
+            f"{path}: no sheet in this workbook has the list columns "
+            f"({', '.join(sorted(NEED))}). Sheets: {', '.join(wb.sheetnames)}"
+        )
     rows = list(ws.iter_rows(values_only=True))
     wb.close()
-    if not rows:
-        return 0, {}
 
-    header = [text(h) for h in rows[0]]
     idx = {h: i for i, h in enumerate(header) if h}
-    need = {"FirstName", "LastName", "HomeStreet"}
-    if not need.issubset(idx):
-        raise SystemExit(f"{path}: not a birthday list (header was {header})")
+    need = NEED
 
     name = path.replace("\\", "/").split("/")[-1]
     month, year = month_year_from_name(name)
