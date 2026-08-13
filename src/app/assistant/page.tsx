@@ -10,7 +10,7 @@ import { Sparkles, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { supabase } from "@/lib/supabaseClient";
 import { parseLeadText, dedupeKey, type ParsedLead, type ParseResult } from "@/lib/aiImport";
-import { canonicalPhone } from "@/lib/phone";
+import { canonicalPhone, formatPhone } from "@/lib/phone";
 import { enrichUncheckedLeads } from "@/lib/homeValue";
 import { geocodeUncheckedLeads } from "@/lib/geocode";
 
@@ -182,7 +182,7 @@ export default function AssistantPage() {
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-baseline gap-x-2 text-sm">
                     <span className="font-semibold text-ink">{r.name || "No name"}</span>
-                    <span className="text-worked">{r.phone || "no phone"}</span>
+                    <span className="text-worked">{formatPhone(r.phone) || "no phone"}</span>
                     {r.flag === "existing-phone" && (
                       <span className="rounded bg-week/10 px-1.5 py-0.5 text-[11px] font-medium text-week">
                         phone already in CRM

@@ -18,7 +18,7 @@ import { applyApptOutcome, applyDisposition, APPT_OUTCOMES, DISPOSITIONS } from 
 import { awaitingAppointmentOutcome } from "@/lib/priority";
 import { formatActionDue, nextPendingAction } from "@/lib/actions";
 import { logActivity } from "@/lib/sequences";
-import { altPhone } from "@/lib/phone";
+import { altPhone, formatPhone } from "@/lib/phone";
 import LeadCardHeader from "@/components/LeadCardHeader";
 import CallHistory from "@/components/CallHistory";
 import SmartCapture from "@/components/SmartCapture";
@@ -183,7 +183,7 @@ export default function LeadCard({
               onClick={() => dial(lead.phone!)}
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
             >
-              <Phone size={18} /> Call {lead.phone}
+              <Phone size={18} /> Call {formatPhone(lead.phone)}
             </button>
           )}
           {second && (

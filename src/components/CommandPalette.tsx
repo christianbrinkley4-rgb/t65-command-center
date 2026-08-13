@@ -24,7 +24,7 @@ import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft, Command, UserRoundPlus } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { ALL_NAV } from "@/lib/nav";
-import { canonicalPhone } from "@/lib/phone";
+import { canonicalPhone, formatPhone } from "@/lib/phone";
 import { effectiveDueDate } from "@/lib/buckets";
 import T65Badge from "@/components/T65Badge";
 import LeadPanel from "@/components/LeadPanel";
@@ -278,7 +278,7 @@ export default function CommandPalette() {
                             )}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-later">
-                            {row.lead.phone || "no phone"}
+                            {formatPhone(row.lead.phone) || "no phone"}
                             {row.lead.city ? ` · ${row.lead.city}` : ""}
                             {` · ${dueSummary(row.lead)}`}
                           </span>

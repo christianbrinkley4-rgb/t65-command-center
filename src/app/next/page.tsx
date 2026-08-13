@@ -18,6 +18,7 @@ import CallHistory from "@/components/CallHistory";
 import { trustedHomeValue } from "@/lib/homeValue";
 import type { Disposition, LeadSnapshot } from "@/lib/dispositions";
 import type { LeadWithBucket } from "@/lib/types";
+import { formatPhone } from "@/lib/phone";
 
 // Keyboard hotkeys for power dialing: number keys fire dispositions in the
 // order they appear, letters for the rest. Fast path applies the house-default
@@ -320,7 +321,7 @@ export default function NextUpPage() {
                 onClick={() => onDial(lead.phone!)}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
-                <Phone size={18} /> {lead.phone}
+                <Phone size={18} /> {formatPhone(lead.phone)}
               </a>
             )}
             {lead.phone2 && (

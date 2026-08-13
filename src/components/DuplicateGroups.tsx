@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 import { Merge, Phone, Users, ChevronDown, ChevronRight } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { duplicateGroups, mergeLeads, previewMerge } from "@/lib/merge";
-import { canonicalPhone } from "@/lib/phone";
+import { canonicalPhone, formatPhone } from "@/lib/phone";
 import { listLabel } from "@/lib/categories";
 import T65Badge from "@/components/T65Badge";
 import { askedNotToBeCalled, onScrubList, type LeadWithBucket } from "@/lib/types";
@@ -77,7 +77,7 @@ function Group({
     <div className="border-b border-line last:border-b-0">
       <div className="flex flex-wrap items-center gap-2 bg-paper/50 px-3 py-2">
         <Phone size={13} className="text-worked" aria-hidden />
-        <span className="text-sm font-semibold text-ink tabular-nums">{survivor.phone}</span>
+        <span className="text-sm font-semibold text-ink tabular-nums">{formatPhone(survivor.phone)}</span>
         <span className="text-xs text-later">
           {group.length} records for what looks like one person
         </span>

@@ -39,6 +39,7 @@ import {
   type Household,
 } from "@/lib/knock";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
+import { formatPhone } from "@/lib/phone";
 import { setAppointment } from "@/lib/dispositions";
 import { scheduleFollowUp } from "@/lib/actions";
 import { writeOrQueue } from "@/lib/offline";
@@ -1153,8 +1154,8 @@ ${prior}` : entry,
               }
               title={
                 askedNotToBeCalled(dialable)
-                  ? dialable.phone + " — this person asked not to be called."
-                  : String(dialable.phone)
+                  ? formatPhone(dialable.phone) + " — this person asked not to be called."
+                  : formatPhone(dialable.phone)
               }
             >
               <Phone size={16} aria-hidden />
@@ -1471,8 +1472,8 @@ ${prior}` : entry,
               }
               title={
                 askedNotToBeCalled(dialable)
-                  ? dialable.phone + " — this person asked not to be called."
-                  : String(dialable.phone)
+                  ? formatPhone(dialable.phone) + " — this person asked not to be called."
+                  : formatPhone(dialable.phone)
               }
             >
               <Phone size={16} aria-hidden />
