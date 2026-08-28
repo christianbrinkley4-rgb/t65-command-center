@@ -6,43 +6,26 @@
 // decide it.
 
 import { useEffect, useRef, useState } from "react";
-import { X, MapPin, LoaderCircle, Star, Bookmark, Trash2 } from "lucide-react";
+import { X, MapPin, LoaderCircle, Star, Bookmark, Trash2, Map as MapIcon } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import type { LatLng, RoutePlan } from "@/lib/route";
 import { remainingCount, savedAgo, type SavedRoute } from "@/lib/savedRoutes";
+import { coordLabel, loadPlaces, savePlace, type SavedPlace } from "@/lib/places";
+import MapPicker from "./MapPicker";
 
 // The plan type lives in lib/route now, so saved-route storage can hold one
 // without importing a component. Re-exported because this dialog is still where
 // everyone expects to find it.
 export type { RoutePlan };
-
-export type SavedPlace = { label: string; address: string; lat: number; lng: number };
-
-const PLACES_KEY = "t65-places";
-
-export function loadPlaces(): SavedPlace[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(PLACES_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr.slice(0, 6) : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePlace(p: SavedPlace) {
-  const existing = loadPlaces().filter(
-    (x) => x.address.toLowerCase() !== p.address.toLowerCase()
-  );
-  localStorage.setItem(PLACES_KEY, JSON.stringify([p, ...existing].slice(0, 6)));
-}
+export { loadPlaces, type SavedPlace };
 
 const DOOR_OPTIONS = [5, 10, 15, 20, 30, 0];
 const MILE_OPTIONS = [3, 5, 10, 20, 0];
 
 type StartMode = "here" | "address";
 type EndMode = "anywhere" | "start" | "address";
+/** Which end of the route the map is open for, or closed. */
+type MapTarget = "start" | "end" | null;
 
 export default function RoutePlanner({
   open,
@@ -72,6 +55,12 @@ export default function RoutePlanner({
   const [places, setPlaces] = useState<SavedPlace[]>([]);
   const [resolving, setResolving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // A place that already carries its coordinates — dropped on the map, or
+  // picked off the saved list. Holding it means Build does no lookup at all,
+  // and "no match" stops being a thing that can happen on a sidewalk.
+  const [startPin, setStartPin] = useState<SavedPlace | null>(null);
+  const [endPin, setEndPin] = useState<SavedPlace | null>(null);
+  const [mapFor, setMapFor] = useState<MapTarget>(null);
   // Deleting a route takes two taps. One tap is too easy on a phone held in the
   // same hand as a clipboard, and the route it throws away can't be rebuilt.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -83,19 +72,37 @@ export default function RoutePlanner({
       setErr(null);
       setResolving(false);
       setConfirmDelete(null);
+      setMapFor(null);
     }
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      // The map sits on top and owns Escape while it's up.
+      if (e.key === "Escape" && !mapFor) onCancel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  }, [open, onCancel, mapFor]);
 
   if (!open) return null;
+
+  /** Attach an already-located place to one end of the route. */
+  function applyPlace(target: Exclude<MapTarget, null>, p: SavedPlace) {
+    const shown = p.address || p.label;
+    if (target === "start") {
+      setStartPin(p);
+      setStartAddress(shown);
+      setStartMode("address");
+    } else {
+      setEndPin(p);
+      setAddress(shown);
+      setEndMode("address");
+    }
+    setPlaces(loadPlaces());
+    setErr(null);
+  }
 
   /**
    * Turn a typed address into a point, reusing a saved place when we already
@@ -104,13 +111,15 @@ export default function RoutePlanner({
    */
   async function resolveAddress(raw: string, what: "start from" | "finish at"): Promise<SavedPlace> {
     const q = raw.trim();
-    if (!q) throw new Error(`Type an address to ${what}, or pick a saved place.`);
+    if (!q) throw new Error(`Type an address to ${what}, drop a pin on the map, or pick a saved place.`);
     const hit = places.find((p) => p.address.toLowerCase() === q.toLowerCase());
     if (hit) return hit;
     const { data, error } = await supabase.functions.invoke("geocode", { body: { oneline: q } });
     if (error) throw new Error("Address lookup failed. Check your signal and try again.");
     if (!data?.point) {
-      throw new Error("Couldn't find that address. Add the city, or try a nearby cross street.");
+      throw new Error(
+        "Couldn't find that address. Add the city, try a nearby cross street, or drop a pin on the map instead."
+      );
     }
     const place: SavedPlace = {
       label: q.split(",")[0].trim(),
@@ -129,7 +138,7 @@ export default function RoutePlanner({
       let startPoint: LatLng | null = null;
       let startLabel: string | null = null;
       if (startMode === "address") {
-        const p = await resolveAddress(startAddress, "start from");
+        const p = startPin ?? (await resolveAddress(startAddress, "start from"));
         startPoint = { lat: p.lat, lng: p.lng };
         startLabel = p.label;
       }
@@ -138,10 +147,12 @@ export default function RoutePlanner({
       let endLabel: string | null = null;
       let endAddress: string | null = null;
       if (endMode === "address") {
-        const p = await resolveAddress(address, "finish at");
+        const p = endPin ?? (await resolveAddress(address, "finish at"));
         endPoint = { lat: p.lat, lng: p.lng };
         endLabel = p.label;
-        endAddress = p.address;
+        // A pin with no street address is not a failure: route.ts falls back to
+        // "lat,lng" for the Maps destination, which is exact.
+        endAddress = p.address || null;
       }
 
       onBuild({
@@ -166,7 +177,82 @@ export default function RoutePlanner({
       ? "rounded-xl bg-brand px-3 py-2.5 text-sm font-semibold text-white"
       : "rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-worked hover:bg-paper";
 
+  /** Address box + "Map" button + saved-place chips. Same shape at both ends. */
+  function placeField(target: Exclude<MapTarget, null>) {
+    const isStart = target === "start";
+    const value = isStart ? startAddress : address;
+    const pin = isStart ? startPin : endPin;
+    return (
+      <div className="mt-2">
+        <div className="flex gap-1.5">
+          <input
+            value={value}
+            onChange={(e) => {
+              // Typing means they've abandoned the pin; the text is the truth
+              // again and has to be looked up on Build.
+              if (isStart) {
+                setStartAddress(e.target.value);
+                setStartPin(null);
+              } else {
+                setAddress(e.target.value);
+                setEndPin(null);
+              }
+            }}
+            aria-label={isStart ? "Address to start from" : "Address to finish at"}
+            placeholder={isStart ? "Office, first appointment, home…" : "Office, next appointment, home…"}
+            className="min-w-0 flex-1 rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+          />
+          <button
+            onClick={() => setMapFor(target)}
+            aria-label={isStart ? "Pick the start on a map" : "Pick the finish on a map"}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-line bg-white px-3 text-sm font-semibold text-worked hover:bg-paper"
+          >
+            <MapIcon size={15} aria-hidden />
+            Map
+          </button>
+        </div>
+
+        {pin ? (
+          <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-later">
+            <MapPin size={11} className="text-brand" aria-hidden />
+            <span className="font-semibold text-worked">{pin.label}</span>
+            <span className="tabular-nums">· {coordLabel(pin.lat, pin.lng)}</span>
+            <button
+              onClick={() => setMapFor(target)}
+              className="font-semibold text-brand underline underline-offset-2"
+            >
+              Move it
+            </button>
+          </p>
+        ) : (
+          places.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {places.map((p) => (
+                <button
+                  key={`${p.address}|${p.lat},${p.lng}`}
+                  onClick={() => applyPlace(target, p)}
+                  className="flex items-center gap-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-worked hover:bg-white"
+                >
+                  <Star size={11} aria-hidden /> {p.label}
+                </button>
+              ))}
+            </div>
+          )
+        )}
+
+        {!pin && (
+          <p className="mt-1 text-[11px] text-later">
+            {isStart
+              ? "Plan tomorrow's route from the couch, or start from your next appointment."
+              : "Saved automatically so it's one tap next time."}
+          </p>
+        )}
+      </div>
+    );
+  }
+
   return (
+    <>
     <div
       className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center"
       onClick={onCancel}
@@ -270,33 +356,7 @@ export default function RoutePlanner({
               A location
             </button>
           </div>
-          {startMode === "address" && (
-            <div className="mt-2">
-              <input
-                value={startAddress}
-                onChange={(e) => setStartAddress(e.target.value)}
-                aria-label="Address to start from"
-                placeholder="Office, first appointment, home…"
-                className="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
-              />
-              {places.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {places.map((p) => (
-                    <button
-                      key={p.address}
-                      onClick={() => setStartAddress(p.address)}
-                      className="flex items-center gap-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-worked hover:bg-white"
-                    >
-                      <Star size={11} aria-hidden /> {p.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <p className="mt-1 text-[11px] text-later">
-                Plan tomorrow's route from the couch, or start from your next appointment.
-              </p>
-            </div>
-          )}
+          {startMode === "address" && placeField("start")}
           {startMode === "here" && !start && (
             <p className="mt-1 text-[11px] text-later">Still finding your location…</p>
           )}
@@ -315,36 +375,10 @@ export default function RoutePlanner({
               Back at start
             </button>
             <button onClick={() => setEndMode("address")} className={chip(endMode === "address")}>
-              An address
+              A location
             </button>
           </div>
-          {endMode === "address" && (
-            <div className="mt-2">
-              <input
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                aria-label="Address to finish at"
-                placeholder="Office, next appointment, home…"
-                className="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
-              />
-              {places.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {places.map((p) => (
-                    <button
-                      key={p.address}
-                      onClick={() => setAddress(p.address)}
-                      className="flex items-center gap-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-worked hover:bg-white"
-                    >
-                      <Star size={11} aria-hidden /> {p.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <p className="mt-1 text-[11px] text-later">
-                Saved automatically so it's one tap next time.
-              </p>
-            </div>
-          )}
+          {endMode === "address" && placeField("end")}
           {endMode === "anywhere" && (
             <p className="mt-1 text-[11px] text-later">
               Shortest overall path; you stop wherever the last door is.
@@ -408,5 +442,23 @@ export default function RoutePlanner({
         </div>
       </div>
     </div>
+
+      {/* Sibling of the backdrop, not a child of it: a tap on the map must not
+          bubble into the planner's click-outside-to-close. */}
+      <MapPicker
+        open={mapFor !== null}
+        title={mapFor === "start" ? "Start from" : "Finish at"}
+        // Open on the pin already chosen for this end, else wherever the phone
+        // is, else the office. Never a blank map of the whole state.
+        initial={
+          (mapFor === "start" ? startPin : mapFor === "end" ? endPin : null) ?? start ?? null
+        }
+        onCancel={() => setMapFor(null)}
+        onPick={(p) => {
+          if (mapFor) applyPlace(mapFor, p);
+          setMapFor(null);
+        }}
+      />
+    </>
   );
 }

@@ -59,3 +59,44 @@ export async function geocodeUncheckedLeads(
   }
   return progress;
 }
+
+/**
+ * Coordinates → a street address, for labelling a pin the agent dropped on the
+ * map. OpenStreetMap's Nominatim, because the Census batch geocoder only runs
+ * one direction and reverse-geocoding a single point doesn't justify a second
+ * edge function.
+ *
+ * Best effort by design. The route math never needs this — a dropped pin is
+ * already a point, and the Google Maps handoff falls back to "lat,lng", which
+ * it accepts. So every failure path here returns null and the pin still works.
+ */
+export async function reverseGeocode(
+  lat: number,
+  lng: number,
+  signal?: AbortSignal
+): Promise<{ label: string; address: string } | null> {
+  const url =
+    "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1" +
+    `&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`;
+  try {
+    const resp = await fetch(url, { signal, headers: { Accept: "application/json" } });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const a = data?.address;
+    if (!a) return null;
+
+    const street = [a.house_number, a.road].filter(Boolean).join(" ").trim();
+    const town = a.city || a.town || a.village || a.hamlet || a.suburb || a.county || "";
+    const label = street || town || data.name || null;
+    if (!label) return null;
+
+    const address = [street || town, town && street ? town : "", a.state, a.postcode]
+      .filter(Boolean)
+      .join(", ")
+      .replace(/, (\d{5})$/, " $1");
+    return { label, address: address || label };
+  } catch {
+    // Aborted, offline, rate-limited, CORS — all the same answer to the caller.
+    return null;
+  }
+}

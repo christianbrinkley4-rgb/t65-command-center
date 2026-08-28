@@ -1,9 +1,21 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Census geocoder proxy. The Census API has no browser CORS, so the app calls
-// this instead. Takes {addresses: [{id, street, city, state, zip}]} (≤500),
-// runs one Census BATCH request, returns {results: [{id, lat, lng}]} for
-// matches only. No key, no cost.
+// this instead. No key, no cost.
+//
+// Two shapes in, because the app asks two different questions:
+//
+//   {addresses: [{id, street, city, state, zip}]}  (≤500)
+//     One Census BATCH request. Returns {results: [{id, lat, lng}]} for matches
+//     only — the nightly backfill that puts leads on the map.
+//
+//   {oneline: "400 Bellemeade St, Greensboro NC"}
+//     One Census ONELINE request. Returns {point: {lat, lng}} or {point: null}
+//     — the route planner resolving a typed start or finish.
+//
+// The oneline branch was missing while the planner was already calling it,
+// so every typed address came back "Couldn't find that address." Dropping a
+// pin on the map avoids this path entirely; this makes typing work too.
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +24,7 @@ const CORS = {
 };
 
 const BATCH_URL = "https://geocoding.geo.census.gov/geocoder/locations/addressbatch";
+const ONELINE_URL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress";
 
 type Addr = { id: string; street?: string; city?: string; state?: string; zip?: string };
 
@@ -20,12 +33,34 @@ Deno.serve(async (req: Request) => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-  let payload: { addresses?: Addr[] };
+  let payload: { addresses?: Addr[]; oneline?: string };
   try {
     payload = await req.json();
   } catch {
     return json({ error: "bad_request" }, 400);
   }
+
+  // Single free-text address → one point.
+  const oneline = String(payload.oneline || "").trim();
+  if (oneline) {
+    try {
+      const u = new URL(ONELINE_URL);
+      u.searchParams.set("address", oneline);
+      u.searchParams.set("benchmark", "Public_AR_Current");
+      u.searchParams.set("format", "json");
+      const resp = await fetch(u.toString());
+      if (!resp.ok) return json({ point: null, error: "census_error", status: resp.status });
+      const body = await resp.json();
+      const m = body?.result?.addressMatches?.[0];
+      const lat = Number(m?.coordinates?.y);
+      const lng = Number(m?.coordinates?.x);
+      if (!isFinite(lat) || !isFinite(lng)) return json({ point: null });
+      return json({ point: { lat, lng }, matched: m?.matchedAddress || null });
+    } catch (e) {
+      return json({ point: null, error: "exception", message: String(e) });
+    }
+  }
+
   const addresses = (payload.addresses || []).slice(0, 500);
   if (!addresses.length) return json({ results: [] });
 
