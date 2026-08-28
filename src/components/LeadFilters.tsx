@@ -64,8 +64,13 @@ export default function LeadFilters({
     chips.push({ label: `${value.cities.length} town${value.cities.length === 1 ? "" : "s"}`, clear: () => set({ cities: [], zips: [] }) });
   if (value.zips.length)
     chips.push({ label: `${value.zips.length} ZIP${value.zips.length === 1 ? "" : "s"}`, clear: () => set({ zips: [] }) });
+  // Named when it's one list, because "Mailer Graham" is the whole point of
+  // the chip and "1 list" tells you nothing.
   if (value.lists.length)
-    chips.push({ label: `${value.lists.length} list${value.lists.length === 1 ? "" : "s"}`, clear: () => set({ lists: [] }) });
+    chips.push({
+      label: value.lists.length === 1 ? value.lists[0] : `${value.lists.length} lists`,
+      clear: () => set({ lists: [] }),
+    });
   if (value.months.length)
     chips.push({ label: `${value.months.length} month${value.months.length === 1 ? "" : "s"}`, clear: () => set({ months: [] }) });
   if (value.counties.length)

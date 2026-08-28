@@ -111,3 +111,81 @@ export function leadCategories(lead: Lead): string[] {
   if (month) cats.push(`${month} birthdays`);
   return cats;
 }
+
+// ---------------------------------------------------------------------------
+// The list menu, after the pruning.
+//
+// The menu used to be a tour of import history: "T65 April", "General leads",
+// `list:t65-april`, `smartasset`, `prospect`, `pipeline`, `merged` — sixteen
+// entries, several of them two names for the same pile, none of them a decision
+// you actually make. Worse, "T65 April" and the April birth-month filter meant
+// almost the same thing, so the menu competed with the filter sitting next to
+// it.
+//
+// There are only two questions worth asking of a list: did this door get a
+// piece of mail, and has anyone ever actually spoken to this person. Town and
+// birth month are their own filters and always were; they do the rest.
+
+export const MAILER_PREFIX = "mailer:";
+
+/** Slug a mailer batch name so the same drop always produces the same tag. */
+export function mailerTag(name: string): string {
+  const slug = String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return slug ? `${MAILER_PREFIX}${slug}` : "";
+}
+
+export const isMailerTag = (tag: string): boolean =>
+  String(tag || "").toLowerCase().startsWith(MAILER_PREFIX);
+
+/** `mailer:graham` reads as "Mailer Graham" in the menu and on the chip. */
+export function mailerLabel(tag: string): string {
+  if (!isMailerTag(tag)) return tag;
+  const words = tag
+    .slice(MAILER_PREFIX.length)
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  return words.length ? `Mailer ${words.join(" ")}` : "Mailer";
+}
+
+/** The one list that isn't a mailer: everyone a conversation has happened with. */
+export const TALKED_LIST = "Already talked to";
+
+/**
+ * Has a human conversation happened, in either direction?
+ *
+ * Deliberately wider than the "Talked before" segment, which runs through the
+ * callable queue and so drops the two groups you most want to look back at:
+ * people who said no, and people already booked. Not interested, interested,
+ * a promised callback and a set appointment are all the same answer to the
+ * question this list asks — somebody picked up.
+ *
+ * A ring-out is not a conversation, so No Answer and Voicemail Left stay out.
+ */
+const TALKED_STATUS =
+  /talked|contacted|interested|not ready|callback|appointment|sold|enrolled|advisor|wrong person|deceased/i;
+
+export function hasBeenTalkedTo(lead: {
+  status?: string | null;
+  appointment_datetime?: string | null;
+  next_follow_up_date?: string | null;
+}): boolean {
+  const s = String(lead.status || "");
+  if (/closed\s*-\s*merged/i.test(s)) return false;
+  if (TALKED_STATUS.test(s)) return true;
+  return Boolean(lead.appointment_datetime) || Boolean(lead.next_follow_up_date);
+}
+
+/**
+ * Which of the two lists this lead is on. A lead can be on both — mailed in
+ * July, spoke to you in August — and both should find it.
+ */
+export function leadLists(lead: Lead): string[] {
+  const out = (lead.tags || []).filter(isMailerTag).map(mailerLabel);
+  if (hasBeenTalkedTo(lead)) out.push(TALKED_LIST);
+  return out;
+}
