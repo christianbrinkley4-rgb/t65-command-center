@@ -71,7 +71,7 @@ import {
 import RoutePlanner, { type RoutePlan } from "@/components/RoutePlanner";
 import T65Badge from "@/components/T65Badge";
 import MultiSelect from "@/components/MultiSelect";
-import { birthMonth, MONTH_NAMES, MONTH_UNKNOWN, normalizeSource } from "@/lib/categories";
+import { birthMonth, leadLists, MONTH_NAMES, MONTH_UNKNOWN } from "@/lib/categories";
 import {
   BAND_GROUPS,
   matchesOccupancy,
@@ -157,7 +157,7 @@ export default function KnockPage() {
   // filter must never hide a door.
   const [cities, setCities] = useState<string[]>([]);
   const [zips, setZips] = useState<string[]>([]);
-  const [lists, setLists] = useState<string[]>([]); // source or tag — a lead can be on several
+  const [lists, setLists] = useState<string[]>([]); // mailer drops — a door mailed twice is on several
   const [months, setMonths] = useState<string[]>([]); // months they turn 65
   // Default skips the $750k+ doors. Those households have an advisor and a
   // gate; a cold knock is the wrong tool. They're still one tap away in their
@@ -339,13 +339,14 @@ export default function KnockPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionPool]);
 
-  // Lists a door can belong to: where it came from (source) plus any list tag
-  // added by a later import. One lead can appear under several.
+  // Which mailer drops these doors are on. This menu used to be every import
+  // source plus every raw tag, so it listed list:t65-december, smartasset and
+  // TrackerLeads_T65Apr side by side — provenance nobody picks a route by, and
+  // a second name for the birth-month filter three menus over. Same rule as the
+  // Power List now: a mailer drop is the only list, because it's the only one
+  // that records something we DID.
   const listOptions = useMemo(() => {
-    const counts = tally([
-      ...optionPool.map((l) => normalizeSource(l.source)),
-      ...optionPool.flatMap((l) => l.tags || []),
-    ]);
+    const counts = tally(optionPool.flatMap(leadLists));
     return Array.from(counts.keys())
       .sort()
       .map((v) => ({ value: v, label: v, count: counts.get(v) }));
@@ -392,7 +393,7 @@ export default function KnockPage() {
     if (zips.length) q = q.filter((l) => zips.includes((l.zip || "").trim()));
     if (lists.length)
       q = q.filter(
-        (l) => lists.includes(normalizeSource(l.source)) || (l.tags || []).some((t) => lists.includes(t))
+        (l) => leadLists(l).some((x) => lists.includes(x))
       );
     if (months.length)
       q = q.filter((l) => {
@@ -536,7 +537,7 @@ export default function KnockPage() {
     if (zips.length) q = q.filter((l) => zips.includes((l.zip || "").trim()));
     if (lists.length)
       q = q.filter(
-        (l) => lists.includes(normalizeSource(l.source)) || (l.tags || []).some((t) => lists.includes(t))
+        (l) => leadLists(l).some((x) => lists.includes(x))
       );
     return q;
   }, [knockedPool, cities, zips, lists]);
@@ -1709,7 +1710,7 @@ ${prior}` : entry,
           }}
         />
         <MultiSelect label="ZIP" allLabel="All ZIPs" options={zipOptions} selected={zips} onChange={setZips} />
-        <MultiSelect label="list" allLabel="All lists" options={listOptions} selected={lists} onChange={setLists} />
+        <MultiSelect label="mailer" allLabel="All mailers" options={listOptions} selected={lists} onChange={setLists} />
         {/* Value, occupancy, birth month, T65 and phone are targeting filters:
             they decide who to go see. A door already knocked has a result
             whatever they say about it, so the results view leaves them out
