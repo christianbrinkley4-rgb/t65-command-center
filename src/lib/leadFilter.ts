@@ -10,7 +10,7 @@
 //   a lead, and it keeps "clear" and "select none" from meaning the same thing.
 //   Within one filter the picks are OR; across filters they are AND.
 
-import { birthMonth, leadLists, MONTH_UNKNOWN, TALKED_LIST } from "./categories";
+import { birthMonth, leadLists, MONTH_UNKNOWN } from "./categories";
 import { matchesOccupancy, matchesValueBand, type Occupancy } from "./valueBands";
 import { trustedHomeValue } from "./homeValue";
 import { withinMiles, type DistanceOrigin } from "./distance";
@@ -20,7 +20,7 @@ import type { Lead } from "./types";
 export type LeadFilterState = {
   cities: string[];
   zips: string[];
-  lists: string[];      // mailer drops and "Already talked to" — a lead can be on several
+  lists: string[];      // mailer drops — a door mailed twice is on several
   months: string[];     // month they turn 65; MONTH_UNKNOWN for "no date"
   counties: string[];
   band: string;
@@ -72,10 +72,9 @@ export function matchesFilter(
   if (f.zips.length && !f.zips.includes(zipOf(lead))) return false;
   if (f.counties.length && !f.counties.includes(countyOf(lead))) return false;
   if (f.lists.length) {
-    // Two kinds of list and no others: a mailer drop ("Mailer Graham") and
-    // "Already talked to". The import-history piles that used to live here —
-    // T65 April, General leads, smartasset, prospect — were either a second
-    // name for the birth-month filter or not a decision anyone makes.
+    // Mailer drops and nothing else. Everything that used to live here — T65
+    // April, General leads, OSCR, smartasset, a town — was a second name for a
+    // filter sitting right next to it.
     if (!leadLists(lead).some((l) => f.lists.includes(l))) return false;
   }
   if (f.months.length) {
@@ -116,18 +115,9 @@ export function buildOptions(pool: Lead[], f: LeadFilterState) {
   };
 }
 
-/**
- * The list menu: every mailer drop present in this pool, newest-looking last
- * because they sort by name, then "Already talked to" pinned to the bottom so
- * it doesn't move around as drops are added.
- */
+/** The list menu: every mailer drop present in this pool, by name. */
 function listOptions(pool: Lead[]): Option[] {
-  const counts = tally(pool.flatMap(leadLists));
-  const talked = counts.get(TALKED_LIST);
-  counts.delete(TALKED_LIST);
-  const out = asOptions(counts);
-  if (talked) out.push({ value: TALKED_LIST, label: TALKED_LIST, count: talked });
-  return out;
+  return asOptions(tally(pool.flatMap(leadLists)));
 }
 
 /** Drop ZIPs that don't exist in the towns just chosen. */

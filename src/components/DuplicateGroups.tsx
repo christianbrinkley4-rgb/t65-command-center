@@ -14,13 +14,17 @@ import { Merge, Phone, Users, ChevronDown, ChevronRight } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { duplicateGroups, mergeLeads, previewMerge } from "@/lib/merge";
 import { canonicalPhone, formatPhone } from "@/lib/phone";
-import { listLabel } from "@/lib/categories";
 import T65Badge from "@/components/T65Badge";
 import { askedNotToBeCalled, onScrubList, type LeadWithBucket } from "@/lib/types";
 
+/**
+ * Enough to tell two records of the same person apart, out of what each one has
+ * actually done. This used to lead with the import list, which said where a row
+ * came from but nothing about which row is worth keeping.
+ */
 function factLine(l: LeadWithBucket): string {
   const bits: string[] = [];
-  bits.push(listLabel(l.source));
+  if (l.created_at) bits.push(`added ${String(l.created_at).slice(0, 10)}`);
   if (l.dials_count) bits.push(`${l.dials_count} dial${l.dials_count === 1 ? "" : "s"}`);
   if (l.knock_count) bits.push(`${l.knock_count} knock${l.knock_count === 1 ? "" : "s"}`);
   if (l.last_contact_date) bits.push(`last worked ${l.last_contact_date}`);
@@ -105,7 +109,7 @@ function Group({
                   name={`survivor-${survivor.phone}`}
                   checked={isSurvivor}
                   onChange={() => setSurvivorId(l.id)}
-                  aria-label={`Keep the record for ${l.name || "this lead"} from ${listLabel(l.source)}`}
+                  aria-label={`Keep the record for ${l.name || "this lead"}${l.address ? ` at ${l.address}` : ""}${factLine(l) ? `, ${factLine(l)}` : ""}`}
                 />
               </label>
               <button onClick={() => onOpen(l)} className="min-w-0 flex-1 text-left">
@@ -140,7 +144,7 @@ function Group({
             {preview.map(({ loser, kept, conflicts }) => (
               <div key={loser.id}>
                 <p className="font-semibold text-ink">
-                  Folding in the {listLabel(loser.source)} row
+                  Folding in the {loser.address || "duplicate"} row
                 </p>
                 <ul className="mt-0.5 list-disc pl-4">
                   <li>Dials and knocks add up; the later contact date wins.</li>

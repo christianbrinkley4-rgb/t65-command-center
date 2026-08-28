@@ -16,7 +16,6 @@ import {
   type ParsedFile,
 } from "@/lib/leadImport";
 import { buildOscrMapping, canonize, isOscrExport, oscrToLead } from "@/lib/oscrMap";
-import { listTag } from "@/lib/categories";
 import { enrichUncheckedLeads, type EnrichProgress } from "@/lib/homeValue";
 import { geocodeUncheckedLeads } from "@/lib/geocode";
 
@@ -199,14 +198,12 @@ export default function ImportPage() {
     setResult(null);
     let imported = 0;
     try {
-      // Stamp the list this file came from as a tag as well as the source.
-      // Source holds one answer; tags let the same lead sit in every list it
-      // has ever appeared on, next to its birth month and anything else.
-      const tag = listTag(source);
+      // No list: tag. An import used to stamp one, back when the list menu
+      // was a tour of import history; nothing reads them now, and the source
+      // column already records which file a lead came off. Tags are for mailer
+      // drops, which record something we DID rather than where a row came from.
       for (let i = 0; i < importPlan.rows.length; i += BATCH_SIZE) {
-        const batch = importPlan.rows
-          .slice(i, i + BATCH_SIZE)
-          .map((r) => (tag ? { ...r, tags: [tag] } : r));
+        const batch = importPlan.rows.slice(i, i + BATCH_SIZE);
         const { error } = await supabase.from("leads").insert(batch);
         if (error) throw error;
         imported += batch.length;

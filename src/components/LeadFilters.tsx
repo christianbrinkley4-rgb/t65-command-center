@@ -64,11 +64,11 @@ export default function LeadFilters({
     chips.push({ label: `${value.cities.length} town${value.cities.length === 1 ? "" : "s"}`, clear: () => set({ cities: [], zips: [] }) });
   if (value.zips.length)
     chips.push({ label: `${value.zips.length} ZIP${value.zips.length === 1 ? "" : "s"}`, clear: () => set({ zips: [] }) });
-  // Named when it's one list, because "Mailer Graham" is the whole point of
-  // the chip and "1 list" tells you nothing.
+  // Named when it's one drop, because "Mailer Graham" is the whole point of the
+  // chip and "1 mailer" tells you nothing.
   if (value.lists.length)
     chips.push({
-      label: value.lists.length === 1 ? value.lists[0] : `${value.lists.length} lists`,
+      label: value.lists.length === 1 ? value.lists[0] : `${value.lists.length} mailers`,
       clear: () => set({ lists: [] }),
     });
   if (value.months.length)
@@ -125,7 +125,7 @@ export default function LeadFilters({
                 selected={value.zips} onChange={(zips) => set({ zips })}
               />
               <MultiSelect
-                size={size} label="list" allLabel="All lists" options={options.lists}
+                size={size} label="mailer" allLabel="All mailers" options={options.lists}
                 selected={value.lists} onChange={(lists) => set({ lists })}
               />
               <MultiSelect

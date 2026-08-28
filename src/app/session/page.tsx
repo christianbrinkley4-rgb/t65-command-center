@@ -25,7 +25,6 @@ import { useFilterOrigin } from "@/hooks/useFilterOrigin";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
 import { supabase } from "@/lib/supabaseClient";
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
-import { listLabel } from "@/lib/categories";
 import SmartCapture from "@/components/SmartCapture";
 import CallHistory from "@/components/CallHistory";
 import LeadCardHeader from "@/components/LeadCardHeader";

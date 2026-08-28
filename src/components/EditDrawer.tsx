@@ -18,7 +18,6 @@ import ActionPlanner from "@/components/ActionPlanner";
 import SmartCapture from "@/components/SmartCapture";
 import { zipOf } from "@/components/LeadAddress";
 import { altPhone, formatPhone } from "@/lib/phone";
-import { listLabel } from "@/lib/categories";
 import { canonicalPhone } from "@/lib/phone";
 import T65Badge from "@/components/T65Badge";
 import LeadIdentityFields, {
@@ -493,11 +492,10 @@ export default function EditDrawer({
                   with the name, because there are dial buttons on this panel. */}
               <T65Badge birthday={lead.birthday} showMissing />
             </div>
-            {/* The list, in the words Christian and Will actually use: "T65
-                March" or "General leads". The raw source string and row number
-                are import plumbing and mean nothing on a live call. */}
+            {/* Where they are. The import source and row number are plumbing
+                and mean nothing on a live call, so they aren't here. */}
             <p className="text-xs text-slate-500">
-              {listLabel(lead.source)} · {lead.city || "—"}, {lead.state || "NC"}
+              {lead.city || "—"}, {lead.state || "NC"}
               {zipOf(lead) ? ` ${zipOf(lead)}` : ""}
               {lead.county ? ` (${lead.county} County)` : ""}
             </p>

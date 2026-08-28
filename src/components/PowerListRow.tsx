@@ -16,7 +16,6 @@ import { scheduleFollowUp } from "@/lib/actions";
 import { downloadIcs } from "@/lib/calendar";
 import LeadAddress from "@/components/LeadAddress";
 import T65Badge from "@/components/T65Badge";
-import { listLabel } from "@/lib/categories";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
 import { effectiveDueDate } from "@/lib/buckets";
 import { isFresh, withinCallingHours, type ScoredLead } from "@/lib/priority";
@@ -265,9 +264,12 @@ export default function PowerListRow({
               without opening anything. */}
           <LeadAddress lead={lead} className="text-xs" size={11} />
           <p className="truncate text-xs text-later">
-            {listLabel(lead.source)}
-            {trusted ? ` · $${Math.round(trusted / 1000)}k` : ""}
-            {suspectValue ? ` · ${suspectValue}, no home value` : ""}
+            {[
+              trusted ? `$${Math.round(trusted / 1000)}k` : "",
+              suspectValue ? `${suspectValue}, no home value` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
         </div>
 

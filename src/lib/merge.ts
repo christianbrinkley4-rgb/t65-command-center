@@ -26,7 +26,7 @@
 
 import { supabase } from "./supabaseClient";
 import { logActivity, todayStr } from "./sequences";
-import { listTag, mergeTags } from "./categories";
+import { mergeTags } from "./categories";
 import { canonicalPhone, samePhone } from "./phone";
 import { MERGED_STATUS } from "./types";
 import type { Lead, LeadWithBucket } from "./types";
@@ -285,12 +285,10 @@ export function previewMerge(survivor: Lead, loser: Lead): { patch: Partial<Lead
     );
   }
 
-  // listTag(), not a hand-rolled slug — the whole point of that helper is that
-  // the same list name always produces the same tag.
-  patch.tags = mergeTags(survivor.tags, [
-    ...(loser.tags || []),
-    ...(loser.source && loser.source !== survivor.source ? [listTag(loser.source)] : []),
-  ]);
+  // The loser's tags come across whole, which is what carries its mailer drops
+  // onto the surviving record. Nothing synthesizes a list: tag for the loser's
+  // source any more — the source column already says where the row came from.
+  patch.tags = mergeTags(survivor.tags, loser.tags || []);
 
   // Both note blobs, both labelled. Anything the loop above refused to
   // overwrite is written down here so it survives in readable form.

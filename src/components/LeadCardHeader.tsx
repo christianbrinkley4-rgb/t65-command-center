@@ -11,7 +11,6 @@
 
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
 import T65Badge from "@/components/T65Badge";
-import { listLabel } from "@/lib/categories";
 import { iepPhase, IEP_LABEL, isFresh } from "@/lib/priority";
 import { trustedHomeValue } from "@/lib/homeValue";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
@@ -47,13 +46,16 @@ export default function LeadCardHeader({
         <LeadAddress lead={lead} className="mt-1 text-sm" size={14} />
 
         <p className="mt-0.5 text-sm text-worked">
-          {zipOf(lead) ? `ZIP ${zipOf(lead)} · ` : ""}
-          {listLabel(lead.source)}
-          {lead.tier ? ` · Tier ${lead.tier}` : ""}
-          {trustedHomeValue(lead) ? ` · $${Math.round(Number(trustedHomeValue(lead)) / 1000)}k home` : ""}
-          {/* How far you'd be driving if this call books. Worth knowing before
-              you offer a time, not after. */}
-          {milesFrom(lead, OFFICE) !== null ? ` · ${distanceLabel(milesFrom(lead, OFFICE))} out` : ""}
+          {/* The last item is how far you'd be driving if this call books.
+              Worth knowing before you offer a time, not after. */}
+          {[
+            zipOf(lead) ? `ZIP ${zipOf(lead)}` : "",
+            lead.tier ? `Tier ${lead.tier}` : "",
+            trustedHomeValue(lead) ? `$${Math.round(Number(trustedHomeValue(lead)) / 1000)}k home` : "",
+            milesFrom(lead, OFFICE) !== null ? `${distanceLabel(milesFrom(lead, OFFICE))} out` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
       </div>
 

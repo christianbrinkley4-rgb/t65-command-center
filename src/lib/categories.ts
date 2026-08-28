@@ -53,40 +53,6 @@ export function normalizeSource(source: string | null | undefined): string {
 }
 
 /**
- * What LIST a lead came off, in the only vocabulary that means anything here.
- *
- * `source` had grown sixteen values — OSCR, TrackerLeads_T65Apr, T65 27406,
- * T65 Kernersville, ProspectSheet, BusinessTracker — which made the list menu
- * a tour of import history rather than a way to choose work. There are really
- * only two kinds of lead: one that came off a monthly T65 list, and one that
- * didn't. So the menu says "T65 April" or "General leads", and the month
- * filter (which is derived from the birthday) does the rest — pick May and you
- * get the T65 May list AND every other lead with a May birthday, which is what
- * you actually wanted.
- */
-export const GENERAL_LIST = "General leads";
-
-const MONTH_FROM_SOURCE = /t65\s*[_-]?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
-
-export function listLabel(source: string | null | undefined): string {
-  const m = MONTH_FROM_SOURCE.exec(String(source || ""));
-  if (!m) return GENERAL_LIST;
-  const i = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-    .indexOf(m[1].toLowerCase());
-  return i >= 0 ? `T65 ${MONTH_NAMES[i]}` : GENERAL_LIST;
-}
-
-/** Slug for a list name, so the same list always produces the same tag. */
-export function listTag(name: string): string {
-  const slug = String(name || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return slug ? `list:${slug}` : "";
-}
-
-/**
  * Union, case-insensitive, order preserved. An import ADDS its list tag; it
  * never replaces what's already on the lead — that's the whole point.
  */
@@ -100,16 +66,6 @@ export function mergeTags(existing: string[] | null | undefined, add: string[]):
     out.push(v);
   }
   return out;
-}
-
-/** Every bucket this lead belongs to, for display and for filter menus. */
-export function leadCategories(lead: Lead): string[] {
-  const cats: string[] = [];
-  if (lead.source) cats.push(lead.source);
-  for (const t of lead.tags || []) cats.push(t);
-  const month = birthMonthLabel(lead.birthday);
-  if (month) cats.push(`${month} birthdays`);
-  return cats;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,40 +108,17 @@ export function mailerLabel(tag: string): string {
   return words.length ? `Mailer ${words.join(" ")}` : "Mailer";
 }
 
-/** The one list that isn't a mailer: everyone a conversation has happened with. */
-export const TALKED_LIST = "Already talked to";
-
 /**
- * Has a human conversation happened, in either direction?
+ * Which mailer drops this lead is on. A door mailed twice is on both, and
+ * both should find it.
  *
- * Deliberately wider than the "Talked before" segment, which runs through the
- * callable queue and so drops the two groups you most want to look back at:
- * people who said no, and people already booked. Not interested, interested,
- * a promised callback and a set appointment are all the same answer to the
- * question this list asks — somebody picked up.
- *
- * A ring-out is not a conversation, so No Answer and Voicemail Left stay out.
- */
-const TALKED_STATUS =
-  /talked|contacted|interested|not ready|callback|appointment|sold|enrolled|advisor|wrong person|deceased/i;
-
-export function hasBeenTalkedTo(lead: {
-  status?: string | null;
-  appointment_datetime?: string | null;
-  next_follow_up_date?: string | null;
-}): boolean {
-  const s = String(lead.status || "");
-  if (/closed\s*-\s*merged/i.test(s)) return false;
-  if (TALKED_STATUS.test(s)) return true;
-  return Boolean(lead.appointment_datetime) || Boolean(lead.next_follow_up_date);
-}
-
-/**
- * Which of the two lists this lead is on. A lead can be on both — mailed in
- * July, spoke to you in August — and both should find it.
+ * This is the whole list menu. Everything else that used to live here was a
+ * second name for a filter sitting next to it: "T65 December" for the birth
+ * month, an OSCR or import-source pile for provenance nobody chooses work by,
+ * a town for the town filter. A mailer drop is the one grouping the rest of
+ * the app cannot express, because it records something we DID rather than
+ * something the lead is.
  */
 export function leadLists(lead: Lead): string[] {
-  const out = (lead.tags || []).filter(isMailerTag).map(mailerLabel);
-  if (hasBeenTalkedTo(lead)) out.push(TALKED_LIST);
-  return out;
+  return (lead.tags || []).filter(isMailerTag).map(mailerLabel);
 }

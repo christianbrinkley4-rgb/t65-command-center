@@ -13,7 +13,6 @@ import LeadPanel from "@/components/LeadPanel";
 import ActionPlanner, { actionInDays } from "@/components/ActionPlanner";
 import SeasonBanner from "@/components/SeasonBanner";
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
-import { listLabel } from "@/lib/categories";
 import CallHistory from "@/components/CallHistory";
 import { trustedHomeValue } from "@/lib/homeValue";
 import type { Disposition, LeadSnapshot } from "@/lib/dispositions";
@@ -253,10 +252,13 @@ export default function NextUpPage() {
               </div>
               <LeadAddress lead={lead} className="mt-1 text-sm" size={14} />
               <p className="mt-0.5 text-sm text-slate-500">
-                {zipOf(lead) ? `ZIP ${zipOf(lead)} · ` : ""}
-                {listLabel(lead.source)}
-                {lead.tier ? ` · Tier ${lead.tier}` : ""}
-                {trustedHomeValue(lead) ? ` · $${Number(trustedHomeValue(lead)).toLocaleString()} home` : ""}
+                {[
+                  zipOf(lead) ? `ZIP ${zipOf(lead)}` : "",
+                  lead.tier ? `Tier ${lead.tier}` : "",
+                  trustedHomeValue(lead) ? `$${Number(trustedHomeValue(lead)).toLocaleString()} home` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
