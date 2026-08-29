@@ -21,6 +21,7 @@ import { effectiveDueDate } from "@/lib/buckets";
 import { isFresh, withinCallingHours, type ScoredLead } from "@/lib/priority";
 import { askedNotToBeCalled, onScrubList } from "@/lib/types";
 import { formatPhone } from "@/lib/phone";
+import ContactTrail from "@/components/ContactTrail";
 
 // Short labels for the one-tap call results, in the order agents actually use.
 const RESULT_LABEL: Record<string, string> = {
@@ -263,6 +264,7 @@ export default function PowerListRow({
           {/* Address on the row you dial from, so you know where they are
               without opening anything. */}
           <LeadAddress lead={lead} className="text-xs" size={11} />
+          <ContactTrail lead={lead} size="xs" className="mt-0.5" />
           <p className="truncate text-xs text-later">
             {[
               trusted ? `$${Math.round(trusted / 1000)}k` : "",

@@ -6,6 +6,7 @@ import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
 import { buildQueue, iepPhase, IEP_LABEL, withinCallingHours } from "@/lib/priority";
 import T65Badge from "@/components/T65Badge";
+import ContactTrail from "@/components/ContactTrail";
 import { applyDisposition, DISPOSITIONS, setAppointment, markSold, revertLead, snapshotLead } from "@/lib/dispositions";
 import { logActivity } from "@/lib/sequences";
 import { actionBelongsTo, completeLeadAction, createLeadActions, formatActionDue, nextPendingAction, type ActionDraft } from "@/lib/actions";
@@ -249,6 +250,7 @@ export default function NextUpPage() {
               <div className="flex flex-wrap items-baseline gap-2">
                 <h2 className="font-display text-2xl font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
                 <T65Badge birthday={lead.birthday} size="md" showMissing />
+                <ContactTrail lead={lead} />
               </div>
               <LeadAddress lead={lead} className="mt-1 text-sm" size={14} />
               <p className="mt-0.5 text-sm text-slate-500">

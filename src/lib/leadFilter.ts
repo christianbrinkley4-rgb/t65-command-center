@@ -10,7 +10,7 @@
 //   a lead, and it keeps "clear" and "select none" from meaning the same thing.
 //   Within one filter the picks are OR; across filters they are AND.
 
-import { birthMonth, leadLists, MONTH_UNKNOWN } from "./categories";
+import { birthMonth, leadLists, mailerDate, mailerLabel, MONTH_UNKNOWN } from "./categories";
 import { matchesOccupancy, matchesValueBand, type Occupancy } from "./valueBands";
 import { trustedHomeValue } from "./homeValue";
 import { withinMiles, type DistanceOrigin } from "./distance";
@@ -20,7 +20,7 @@ import type { Lead } from "./types";
 export type LeadFilterState = {
   cities: string[];
   zips: string[];
-  lists: string[];      // mailer drops — a door mailed twice is on several
+  lists: string[];      // mailer drop tags — a door mailed twice is on several
   months: string[];     // month they turn 65; MONTH_UNKNOWN for "no date"
   counties: string[];
   band: string;
@@ -115,9 +115,26 @@ export function buildOptions(pool: Lead[], f: LeadFilterState) {
   };
 }
 
-/** The list menu: every mailer drop present in this pool, by name. */
+/**
+ * The mailer menu: every drop present in this pool, newest first.
+ *
+ * Options carry the tag as their value and the readable date as their label,
+ * which is what lets this sort chronologically. Sorting the labels instead
+ * would put "Sent Aug 21" before "Sent Jul 28" because A precedes J, and a
+ * menu of drops that isn't in drop order is worse than an unsorted one.
+ */
 function listOptions(pool: Lead[]): Option[] {
-  return asOptions(tally(pool.flatMap(leadLists)));
+  const counts = tally(pool.flatMap(leadLists));
+  return Array.from(counts.keys())
+    .sort((a, b) => {
+      const da = mailerDate(a);
+      const db = mailerDate(b);
+      if (da && db) return db.localeCompare(da);   // newest drop first
+      if (da) return -1;                           // dated drops above unnamed
+      if (db) return 1;
+      return a.localeCompare(b);
+    })
+    .map((v) => ({ value: v, label: mailerLabel(v), count: counts.get(v) }));
 }
 
 /** Drop ZIPs that don't exist in the towns just chosen. */

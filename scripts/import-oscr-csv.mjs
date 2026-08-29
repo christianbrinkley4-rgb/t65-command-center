@@ -67,18 +67,6 @@ function samePerson(existingName, incomingName) {
   return s.length >= 3 && l.startsWith(s);
 }
 
-// Categories are additive. `source` holds one list; the `list:` tag holds every
-// list this lead has ever appeared on. Mirrors src/lib/categories.ts — keep the
-// slug rule identical or the same list produces two different tags.
-function listTagFor(name) {
-  const slug = String(name || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return slug ? `list:${slug}` : "";
-}
-
 // "OSCR:Turning 65" is not a category — the whole book is turning 65, so it
 // made a filter entry that could never narrow anything. Those leads are filed
 // by the MONTH they turn 65 (derived from the birthday by the converter), and
@@ -96,17 +84,6 @@ function listLabel(leadSource) {
   return /^turning\s*65$/i.test(v) ? "" : v;
 }
 
-function mergeTags(existing, add) {
-  const out = [...(existing || [])];
-  const seen = new Set(out.map((t) => String(t).toLowerCase()));
-  for (const t of add) {
-    const v = String(t || "").trim();
-    if (!v || seen.has(v.toLowerCase())) continue;
-    seen.add(v.toLowerCase());
-    out.push(v);
-  }
-  return out;
-}
 
 function parseCsv(text) {
   const rows = [];
@@ -192,7 +169,7 @@ async function main() {
   const now = new Date().toISOString();
   const inserts = [];
   const updates = [];
-  const stats = { insert: 0, refreshOscr: 0, mergePhone: 0, dncSet: 0, skippedNoPhone: 0, sameFileDupe: 0, taggedExisting: 0 };
+  const stats = { insert: 0, refreshOscr: 0, mergePhone: 0, dncSet: 0, skippedNoPhone: 0, sameFileDupe: 0 };
   // One existing lead can absorb only one incoming row — otherwise a second
   // match overwrites the first one's OSCR id and that lead vanishes.
   const claimed = new Set();
@@ -232,17 +209,10 @@ async function main() {
     if (match) claimed.add(match.id);
     if (match) {
       const patch = { ...oscrFields };
-      // A lead can be on more than one list. The Pleasant Garden mailing list
-      // and the OSCR turning-65 pull are both true about the same person, and
-      // `source` only holds one of them — so every import ALSO stamps a
-      // `list:` tag, unioned onto whatever is already there. Nothing is ever
-      // replaced; the lead just belongs to one more category than before.
-      const tag = listTagFor(listLabel(r["Lead source"]));
-      const merged = mergeTags(match.tags, [tag]);
-      if (tag && merged.length !== (match.tags || []).length) {
-        patch.tags = merged;
-        stats.taggedExisting++;
-      }
+      // No list: tag. The app stopped reading them on 2026-08-28 — the only
+      // list it has is a mailer drop, and the birth-month filter covers what
+      // "T65 December" used to say. `source` still records which file a lead
+      // came off. Tags on an existing lead are left exactly as they are.
       // Fill only what's blank on the existing record; never overwrite work.
       if (!match.address && r["Street"]) patch.address = r["Street"];
       if (!match.city && r["City"]) patch.city = r["City"];
@@ -300,7 +270,7 @@ async function main() {
       birthday: r["Birthday"] || null,
       status: "New",
       stage_bucket: "New Prospecting",
-      tags: listTagFor(listLabel(r["Lead source"])) ? [listTagFor(listLabel(r["Lead source"]))] : null,
+      tags: null,
       raw_notes: r["Notes"] || null,
       ...oscrFields,
       do_not_call: isDnc,
@@ -314,7 +284,6 @@ async function main() {
   console.log(`  existing OSCR leads refreshed  ${stats.refreshOscr}`);
   console.log(`  merged onto existing by phone  ${stats.mergePhone}  (no duplicate row created)`);
   console.log(`  newly flagged do-not-call      ${stats.dncSet}`);
-  console.log(`  existing leads added to a list ${stats.taggedExisting}  (now in both categories)`);
   console.log(`  same person twice in the file  ${stats.sameFileDupe} (collapsed)`);
   console.log(`  skipped (no phone, no address) ${stats.skippedNoPhone}`);
   if (dryRun) { console.log("\n[DRY RUN] nothing written."); return; }

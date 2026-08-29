@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import MultiSelect from "@/components/MultiSelect";
+import { mailerLabel } from "@/lib/categories";
 import { MONTH_NAMES, MONTH_UNKNOWN } from "@/lib/categories";
 import { BAND_GROUPS, OCCUPANCY_OPTIONS, VALUE_BANDS, type Occupancy } from "@/lib/valueBands";
 import { DISTANCE_BANDS, type DistanceOrigin } from "@/lib/distance";
@@ -68,7 +69,7 @@ export default function LeadFilters({
   // chip and "1 mailer" tells you nothing.
   if (value.lists.length)
     chips.push({
-      label: value.lists.length === 1 ? value.lists[0] : `${value.lists.length} mailers`,
+      label: value.lists.length === 1 ? mailerLabel(value.lists[0]) : `${value.lists.length} mailers`,
       clear: () => set({ lists: [] }),
     });
   if (value.months.length)

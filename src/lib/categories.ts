@@ -84,14 +84,35 @@ export function mergeTags(existing: string[] | null | undefined, add: string[]):
 
 export const MAILER_PREFIX = "mailer:";
 
-/** Slug a mailer batch name so the same drop always produces the same tag. */
-export function mailerTag(name: string): string {
-  const slug = String(name || "")
+/**
+ * A mailer tag is the DATE the batch dropped: `mailer:2026-08-21`.
+ *
+ * It used to be the town, which was the wrong key. One drop covers several
+ * towns — the 08-21 batch is Gibsonville and McLeansville and Browns Summit —
+ * so naming it after a town either splits one drop into three lists or picks
+ * one town and hides the others. The date is what the batch actually is, it is
+ * the thing the follow-up schedule keys off, and two drops to the same town a
+ * month apart stay separate instead of collapsing into each other.
+ *
+ * Town is still answerable: the town filter sits three menus over.
+ */
+export function mailerTag(dateOrName: string): string {
+  const v = String(dateOrName || "").trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
+  if (iso) return `${MAILER_PREFIX}${iso[1]}-${iso[2]}-${iso[3]}`;
+  const slug = v
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
   return slug ? `${MAILER_PREFIX}${slug}` : "";
+}
+
+/** The drop date behind a tag, or null for an older town-named one. */
+export function mailerDate(tag: string): string | null {
+  if (!isMailerTag(tag)) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tag.slice(MAILER_PREFIX.length));
+  return m ? m[0] : null;
 }
 
 export const isMailerTag = (tag: string): boolean =>
@@ -100,6 +121,15 @@ export const isMailerTag = (tag: string): boolean =>
 /** `mailer:graham` reads as "Mailer Graham" in the menu and on the chip. */
 export function mailerLabel(tag: string): string {
   if (!isMailerTag(tag)) return tag;
+  const iso = mailerDate(tag);
+  if (iso) {
+    // Parsed off the string rather than through Date, which would shift the
+    // day backwards for anyone east of UTC and label the 21st as the 20th.
+    const [, y, mo, d] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso) as RegExpExecArray;
+    const now = String(new Date().getFullYear());
+    const year = y === now ? "" : ` ${y}`;
+    return `Sent ${MONTH_NAMES[Number(mo) - 1].slice(0, 3)} ${Number(d)}${year}`;
+  }
   const words = tag
     .slice(MAILER_PREFIX.length)
     .split(/[-_]+/)
@@ -120,5 +150,5 @@ export function mailerLabel(tag: string): string {
  * something the lead is.
  */
 export function leadLists(lead: Lead): string[] {
-  return (lead.tags || []).filter(isMailerTag).map(mailerLabel);
+  return (lead.tags || []).filter(isMailerTag);
 }

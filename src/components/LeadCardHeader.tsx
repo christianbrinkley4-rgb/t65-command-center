@@ -11,6 +11,7 @@
 
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
 import T65Badge from "@/components/T65Badge";
+import ContactTrail from "@/components/ContactTrail";
 import { iepPhase, IEP_LABEL, isFresh } from "@/lib/priority";
 import { trustedHomeValue } from "@/lib/homeValue";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
@@ -40,6 +41,10 @@ export default function LeadCardHeader({
         <div className="flex flex-wrap items-baseline gap-2">
           <h2 className={nameClass}>{lead.name || "Unnamed lead"}</h2>
           <T65Badge birthday={lead.birthday} size="md" showMissing />
+          {/* What we already did to this house, beside the month they turn 65.
+              On a live call this is what stops you introducing yourself to
+              someone whose door you knocked eight days ago. */}
+          <ContactTrail lead={lead} />
         </div>
 
         {/* Address up top: you need it before you talk, not after. */}

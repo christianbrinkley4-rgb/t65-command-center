@@ -70,8 +70,9 @@ import {
 } from "@/lib/savedRoutes";
 import RoutePlanner, { type RoutePlan } from "@/components/RoutePlanner";
 import T65Badge from "@/components/T65Badge";
+import ContactTrail from "@/components/ContactTrail";
 import MultiSelect from "@/components/MultiSelect";
-import { birthMonth, leadLists, MONTH_NAMES, MONTH_UNKNOWN } from "@/lib/categories";
+import { birthMonth, leadLists, mailerDate, mailerLabel, MONTH_NAMES, MONTH_UNKNOWN } from "@/lib/categories";
 import {
   BAND_GROUPS,
   matchesOccupancy,
@@ -348,8 +349,15 @@ export default function KnockPage() {
   const listOptions = useMemo(() => {
     const counts = tally(optionPool.flatMap(leadLists));
     return Array.from(counts.keys())
-      .sort()
-      .map((v) => ({ value: v, label: v, count: counts.get(v) }));
+      .sort((a, b) => {
+        const da = mailerDate(a);
+        const db = mailerDate(b);
+        if (da && db) return db.localeCompare(da); // newest drop first
+        if (da) return -1;
+        if (db) return 1;
+        return a.localeCompare(b);
+      })
+      .map((v) => ({ value: v, label: mailerLabel(v), count: counts.get(v) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionPool]);
 
@@ -1074,8 +1082,6 @@ ${prior}` : entry,
     const suspectValue = homeValueSuspect(hh.primary, multiUnit.has(hh.key));
     const hv = doorValue(hh);
     const anyDnc = hh.occupants.some((o) => askedNotToBeCalled(o));
-    const knocks = Math.max(...hh.occupants.map((o) => o.knock_count || 0), 0);
-    const lastKnock = hh.occupants.map((o) => o.last_knock_date).filter(Boolean).sort().pop();
     const dialable = hh.occupants.find((o) => o.phone);
     const mapsUrl =
       "https://maps.google.com/?q=" +
@@ -1133,11 +1139,10 @@ ${prior}` : entry,
                   Phone DNC — knock first
                 </span>
               )}
-              {knocks > 0 && (
-                <span className="rounded-md bg-paper px-1.5 py-0.5 text-later">
-                  Knocked {knocks}x{lastKnock ? " · last " + lastKnock : ""}
-                </span>
-              )}
+              {/* Everything already done to this door: the card, the dials,
+                  the previous knocks. This used to be knocks only, so you could
+                  walk up cold to a house that got a mailer eight days ago. */}
+              <ContactTrail occupants={hh.occupants} size="xs" />
               {hh.lat == null && (
                 <span className="rounded-md bg-week/10 px-1.5 py-0.5 font-medium text-week">
                   not on the map
@@ -1418,9 +1423,7 @@ ${prior}` : entry,
             {rec ? clockTime(rec.at) : "time not logged"}
             {rec?.by ? ` · ${rec.by}` : ""}
           </span>
-          {d.knocks > 1 && (
-            <span className="rounded-md bg-paper px-1.5 py-0.5 text-later">{d.knocks} knocks</span>
-          )}
+          <ContactTrail occupants={hh.occupants} size="xs" />
           <T65Badge birthday={lead.birthday} verbose />
           {anyDnc && (
             <span className="rounded-md bg-due-50 px-1.5 py-0.5 font-medium text-due">Phone DNC</span>
