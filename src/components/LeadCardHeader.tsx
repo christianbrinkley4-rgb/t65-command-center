@@ -44,7 +44,7 @@ export default function LeadCardHeader({
           {/* What we already did to this house, beside the month they turn 65.
               On a live call this is what stops you introducing yourself to
               someone whose door you knocked eight days ago. */}
-          <ContactTrail lead={lead} />
+          <ContactTrail lead={lead} showEmpty />
         </div>
 
         {/* Address up top: you need it before you talk, not after. */}

@@ -27,6 +27,7 @@ import {
   groupByStreet,
   groupKnockedByDay,
   knockedDoors,
+  householdKey,
   knockOutcome,
   knockOutcomeTally,
   latestKnockByLead,
@@ -81,7 +82,7 @@ import {
   VALUE_BANDS,
   type Occupancy,
 } from "@/lib/valueBands";
-import { ACTION_ASSIGNEES, askedNotToBeCalled, needsInfo } from "@/lib/types";
+import { ACTION_ASSIGNEES, askedNotToBeCalled, closedOnPhoneOnly, needsInfo } from "@/lib/types";
 import type { ActionAssignee, Activity, LeadWithBucket } from "@/lib/types";
 
 // datetime-local wants "YYYY-MM-DDTHH:MM" in LOCAL time — toISOString() would
@@ -301,15 +302,18 @@ export default function KnockPage() {
   // Phone-DNC and no-phone leads stay in — that's the point of knocking.
   const knockable = useMemo(
     () =>
-      leads.filter(
-        (l) =>
-          (l.address || "").trim() !== "" &&
-          !l.do_not_knock &&
-          // Flagged as wrong info at a door — don't send anyone back to the
-          // same bad address until the record is corrected.
-          !needsInfo(l) &&
-          !(l.stage_bucket === "Closed" || (l.status || "").startsWith("Closed"))
-      ),
+      leads.filter((l) => {
+        if ((l.address || "").trim() === "") return false;
+        if (l.do_not_knock) return false;
+        // Flagged as wrong info at a door — don't send anyone back to the
+        // same bad address until the record is corrected.
+        if (needsInfo(l)) return false;
+        const closed = l.stage_bucket === "Closed" || (l.status || "").startsWith("Closed");
+        // A dead phone line is not a dead door. "Closed - Bad Number" was
+        // taking 705 doors off every route, and those are the best doors in
+        // the book precisely because there is no other way to reach them.
+        return !closed || closedOnPhoneOnly(l);
+      }),
     [leads]
   );
 
@@ -347,7 +351,20 @@ export default function KnockPage() {
   // Power List now: a mailer drop is the only list, because it's the only one
   // that records something we DID.
   const listOptions = useMemo(() => {
-    const counts = tally(optionPool.flatMap(leadLists));
+    // Counted per door, not per lead: one card reaches the whole house, so a
+    // couple at one address is one mailer. Counting leads reported 16 for a
+    // 15-door drop.
+    const seen = new Set<string>();
+    const perDoor: string[] = [];
+    for (const l of optionPool) {
+      for (const tag of leadLists(l)) {
+        const k = `${tag}|${householdKey(l)}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        perDoor.push(tag);
+      }
+    }
+    const counts = tally(perDoor);
     return Array.from(counts.keys())
       .sort((a, b) => {
         const da = mailerDate(a);
@@ -1142,7 +1159,7 @@ ${prior}` : entry,
               {/* Everything already done to this door: the card, the dials,
                   the previous knocks. This used to be knocks only, so you could
                   walk up cold to a house that got a mailer eight days ago. */}
-              <ContactTrail occupants={hh.occupants} size="xs" />
+              <ContactTrail occupants={hh.occupants} size="xs" showEmpty />
               {hh.lat == null && (
                 <span className="rounded-md bg-week/10 px-1.5 py-0.5 font-medium text-week">
                   not on the map

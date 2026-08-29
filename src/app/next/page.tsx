@@ -250,7 +250,7 @@ export default function NextUpPage() {
               <div className="flex flex-wrap items-baseline gap-2">
                 <h2 className="font-display text-2xl font-semibold text-ink">{lead.name || "Unnamed lead"}</h2>
                 <T65Badge birthday={lead.birthday} size="md" showMissing />
-                <ContactTrail lead={lead} />
+                <ContactTrail lead={lead} showEmpty />
               </div>
               <LeadAddress lead={lead} className="mt-1 text-sm" size={14} />
               <p className="mt-0.5 text-sm text-slate-500">

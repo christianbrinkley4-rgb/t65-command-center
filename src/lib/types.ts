@@ -79,6 +79,27 @@ export function needsInfo(lead: { status?: string | null; stage_bucket?: string 
   return lead.stage_bucket === NEEDS_INFO_STAGE || (lead.status || "") === NEEDS_INFO_STATUS;
 }
 
+/**
+ * Closed because the PHONE is dead, not because the person said anything.
+ *
+ * "Closed - Bad Number" is a verdict on a phone line and nothing else. The
+ * house is still there, the mail still arrives, and nobody has answered a door
+ * to say no — so a phone-only closure must not take the door off a knock route.
+ * It had, for 705 leads, which is 705 of the best door targets in the book:
+ * the ones you have no other way to reach.
+ *
+ * Deliberately narrow. Not Interested, Already Enrolled, Placed w/ Another
+ * Advisor and Has Advisor are all verdicts from a PERSON, and those stay
+ * closed. Merged and Invalid Lead are verdicts on the record. Only a dead line
+ * comes back.
+ */
+const PHONE_LINE_CLOSURE = /(bad|wrong|disconnected|invalid)\s*(phone\s*)?number/i;
+
+export function closedOnPhoneOnly(lead: { status?: string | null }): boolean {
+  const s = String(lead.status || "");
+  return /^closed/i.test(s) && PHONE_LINE_CLOSURE.test(s);
+}
+
 // Two rows, one person. When duplicates are merged the loser keeps its row
 // (history is append-only and leads are never deleted) but stops being a lead:
 // it is a tombstone pointing at the survivor, who now holds the calls, the

@@ -11,6 +11,7 @@
 //   Within one filter the picks are OR; across filters they are AND.
 
 import { birthMonth, leadLists, mailerDate, mailerLabel, MONTH_UNKNOWN } from "./categories";
+import { householdKey } from "./knock";
 import { matchesOccupancy, matchesValueBand, type Occupancy } from "./valueBands";
 import { trustedHomeValue } from "./homeValue";
 import { withinMiles, type DistanceOrigin } from "./distance";
@@ -124,7 +125,19 @@ export function buildOptions(pool: Lead[], f: LeadFilterState) {
  * menu of drops that isn't in drop order is worse than an unsorted one.
  */
 function listOptions(pool: Lead[]): Option[] {
-  const counts = tally(pool.flatMap(leadLists));
+  // Per DOOR, not per lead. One card reaches the whole house, so a couple at
+  // one address is one mailer — counting leads reported 16 for a 15-door drop.
+  const seen = new Set<string>();
+  const perDoor: string[] = [];
+  for (const l of pool) {
+    for (const tag of leadLists(l)) {
+      const k = `${tag}|${householdKey(l)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      perDoor.push(tag);
+    }
+  }
+  const counts = tally(perDoor);
   return Array.from(counts.keys())
     .sort((a, b) => {
       const da = mailerDate(a);

@@ -27,6 +27,7 @@ export default function ContactTrail({
   lead,
   occupants,
   size = "sm",
+  showEmpty = false,
   className = "",
 }: {
   lead?: Lead;
@@ -34,10 +35,29 @@ export default function ContactTrail({
   occupants?: Lead[];
   /** `xs` for dense list rows, `sm` for a card you're reading. */
   size?: "xs" | "sm";
+  /**
+   * Say "Never contacted" out loud instead of rendering nothing.
+   *
+   * On a card you're about to work, silence is the wrong answer: it reads as
+   * "the app isn't telling me" rather than "nobody has touched this". On a
+   * dense row it stays off, because 14,000 identical chips is noise.
+   */
+  showEmpty?: boolean;
   className?: string;
 }) {
   const touches = occupants ? householdTrail(occupants) : lead ? contactTrail(lead) : [];
-  if (touches.length === 0) return null;
+
+  if (touches.length === 0) {
+    if (!showEmpty) return null;
+    return (
+      <span
+        className={`inline-flex items-center gap-1 rounded-md border border-line bg-paper px-2 py-0.5 text-[11px] font-semibold text-later ${className}`}
+        title="No mailer, no dial and no knock on this record"
+      >
+        Never contacted
+      </span>
+    );
+  }
 
   const box =
     size === "xs"

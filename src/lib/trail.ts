@@ -72,14 +72,23 @@ export function contactTrail(lead: Lead): Touch[] {
   }
 
   const dials = Number(lead.dials_count || 0);
+  const worked = shortDate(lead.last_contact_date);
   if (dials > 0) {
-    const when = shortDate(lead.last_contact_date);
     out.push({
       kind: "dial",
-      label: when ? `${plural(dials, "dial")} · ${when}` : plural(dials, "dial"),
-      detail: when
-        ? `${plural(dials, "dial")}, last worked ${when}`
+      label: worked ? `${plural(dials, "dial")} · ${worked}` : plural(dials, "dial"),
+      detail: worked
+        ? `${plural(dials, "dial")}, last worked ${worked}`
         : `${plural(dials, "dial")}, no contact date recorded`,
+    });
+  } else if (worked) {
+    // Contacted, but the dial counter never got incremented — logged before
+    // the counter existed, or worked by hand. Keying off dials alone reported
+    // these as never touched.
+    out.push({
+      kind: "dial",
+      label: `Worked ${worked}`,
+      detail: `Contacted ${worked}, no dial count recorded`,
     });
   }
 
