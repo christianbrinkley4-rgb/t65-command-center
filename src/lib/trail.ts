@@ -25,15 +25,19 @@ export type Touch = {
   detail: string;
 };
 
-/** "2026-08-21" → "Aug 21", without going through Date and losing a day. */
+/**
+ * "2026-08-21" → "Aug 21", and "2026-07" → "in Jul" for a drop whose day
+ * nobody recorded. Parsed off the string rather than through Date, which
+ * would shift the day back for anyone east of UTC and label the 21st the 20th.
+ */
 function shortDate(iso: string | null | undefined): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(String(iso || ""));
   if (!m) return "";
   const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const mon = names[Number(m[2]) - 1];
   if (!mon) return "";
   const year = m[1] === String(new Date().getFullYear()) ? "" : ` ${m[1]}`;
-  return `${mon} ${Number(m[3])}${year}`;
+  return m[3] ? `${mon} ${Number(m[3])}${year}` : `in ${mon}${year}`;
 }
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;

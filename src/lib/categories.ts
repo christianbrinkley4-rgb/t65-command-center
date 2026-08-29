@@ -100,6 +100,11 @@ export function mailerTag(dateOrName: string): string {
   const v = String(dateOrName || "").trim();
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (iso) return `${MAILER_PREFIX}${iso[1]}-${iso[2]}-${iso[3]}`;
+  // Month precision, for a drop somebody remembers the month of and not the
+  // day. Better than inventing a day: the follow-up cadence keys off the
+  // enrollment window anyway, and a made-up date reads as fact forever.
+  const month = /^(\d{4})-(\d{2})$/.exec(v);
+  if (month) return `${MAILER_PREFIX}${month[1]}-${month[2]}`;
   const slug = v
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -108,10 +113,14 @@ export function mailerTag(dateOrName: string): string {
   return slug ? `${MAILER_PREFIX}${slug}` : "";
 }
 
-/** The drop date behind a tag, or null for an older town-named one. */
+/**
+ * The drop date behind a tag: "2026-08-21", or "2026-07" when only the month
+ * is known. Null for an older town-named one. Sorts correctly either way,
+ * because a month prefix orders against a full date exactly as you'd want.
+ */
 export function mailerDate(tag: string): string | null {
   if (!isMailerTag(tag)) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tag.slice(MAILER_PREFIX.length));
+  const m = /^(\d{4})-(\d{2})(-\d{2})?$/.exec(tag.slice(MAILER_PREFIX.length));
   return m ? m[0] : null;
 }
 
@@ -125,10 +134,14 @@ export function mailerLabel(tag: string): string {
   if (iso) {
     // Parsed off the string rather than through Date, which would shift the
     // day backwards for anyone east of UTC and label the 21st as the 20th.
-    const [, y, mo, d] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso) as RegExpExecArray;
+    const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(iso) as RegExpExecArray;
+    const [, y, mo, d] = m;
+    const mon = MONTH_NAMES[Number(mo) - 1].slice(0, 3);
     const now = String(new Date().getFullYear());
     const year = y === now ? "" : ` ${y}`;
-    return `Sent ${MONTH_NAMES[Number(mo) - 1].slice(0, 3)} ${Number(d)}${year}`;
+    // "Sent in Jul" says month-precision out loud, so it never reads as a
+    // day-precision drop somebody can plan an eight-day knock off.
+    return d ? `Sent ${mon} ${Number(d)}${year}` : `Sent in ${mon}${year}`;
   }
   const words = tag
     .slice(MAILER_PREFIX.length)
