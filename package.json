@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:deploy": "node scripts/build-deploy.mjs",
+    "test": "node scripts/test-smart-capture.mjs",
     "start": "next start",
     "enrich:home-value": "node scripts/enrich-home-value.mjs"
   },

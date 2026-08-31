@@ -1,5 +1,16 @@
 # Telephony backend — activation, the spam/answer-rate fix, and cost
 
+> **RETIRED, August 31 2026.** The team calls from personal handsets. The Telnyx
+> code was removed from the app in the same change: `lib/telnyx.ts`,
+> `lib/agents.ts`, the `telnyx-dial` and `telnyx-webhook` edge functions, the
+> call-mode toggle and the line HUD are all gone, and the Dial Session's Call
+> button now does one thing, a `tel:` handoff to the handset, still logged.
+> Nothing in the app reads this document. It is kept for the reasoning and the
+> cost model in case a shared line is ever revisited, which is worth doing
+> before a third agent starts: a call returned to a personal cell is invisible
+> to the rest of the team. Do not follow the setup steps expecting the app to
+> pick the line up. It will not.
+
 Built July 22, 2026. The T65 Command Center can now place real calls through Telnyx from the Dial Session, using a model designed specifically to fix the two problems you had: **low answer rates (spam labeling)** and **cost**.
 
 ## What got built

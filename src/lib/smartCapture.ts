@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { logActivity, plusDays, todayStr } from "./sequences";
 import { createLeadActions } from "./actions";
+import { ACTION_ASSIGNEES } from "./types";
 import type { ActionAssignee, ActionType, Lead, LeadWithBucket } from "./types";
 
 // Smart Capture turns a plain-English note ("had appointment, follow up in a
@@ -111,12 +112,60 @@ function parseChannel(text: string): ActionType {
   return "Call";
 }
 
-function parseAssignee(text: string): ActionAssignee {
+// "Will" is a teammate's name and also the most common auxiliary verb in a
+// follow-up note, which is a genuinely nasty collision. The old pattern matched
+// `will call`, `will follow`, `will take` and the rest, so every one of these
+// handed the task to Will:
+//
+//   "i will call her tuesday"        → Will
+//   "i will follow up friday"        → Will
+//   "she said she will call back"    → Will   (the prospect's own words)
+//
+// Nobody was told. The note looked right, the task went to the wrong queue, and
+// the person who made the promise never got the reminder.
+//
+// Two rules fix it. Strip the auxiliary uses first: a subject in front of
+// "will" makes it a verb, every time. Then require a genuinely nominal signal
+// before reading what survives as the person — a possessive, a handoff
+// preposition, or a verb that can only follow a subject ("Will can", "Will
+// needs"). Bare "will call" stays ambiguous and is deliberately NOT read as a
+// name.
+//
+// The tie-break is asymmetric on purpose. Assigning your own task to yourself
+// when you meant a teammate is visible: it sits in your queue and you move it.
+// Assigning it to a teammate when you meant yourself is silent, and that is the
+// failure that actually lost work. Ambiguity resolves to whoever is speaking.
+
+// A subject in front of "will" makes it the verb. Removed before any name test.
+const WILL_AS_VERB =
+  /\b(i|we|you|he|she|it|they|that|this|who|somebody|someone|anyone|nobody|prospect|client|husband|wife|spouse|son|daughter|neighbor|daughter'?s|son'?s)\s+will\b/g;
+
+// What "Will" looks like when it really is the person.
+const WILL_AS_NAME =
+  /\bwill'?s\b|\b(for|to|with|ask|tell|have|let|email|text|send)\s+will\b|\bwill\s+(can|should|shall|needs?|has|had|is|was|owns?|knows?|already)\b/;
+
+// First person. Checked after the name test so an explicit handoff wins.
+const SPEAKER =
+  /\bi'?ll\b|\bi will\b|\bmyself\b|\bfor me\b|\bme\b|\bmy\b|\bi\s+(call|handle|take|follow|reach|do|got)/;
+
+/**
+ * Who the captured task belongs to.
+ *
+ * `me` is whoever is signed in. When they aren't a known assignee (a new agent,
+ * before the team list stops being two hardcoded names) this returns "Either"
+ * rather than guessing a name: a shared task is visible to everyone, where a
+ * wrong name is visible to no one.
+ */
+function parseAssignee(text: string, me: string): ActionAssignee {
   const t = text.toLowerCase();
-  if (/\bwill(\s+(call|handle|take|follow|reach|do|has|should|can|will))|for will\b|give (it |this )?to will\b|will'?s\b|have will\b/.test(t))
-    return "Will";
-  if (/\bchristian\b|\bi'?ll\b|\bi will\b|\bme\b|myself|for me\b|i (call|handle|take|follow|reach)/.test(t))
-    return "Christian";
+  const speaker: ActionAssignee = (ACTION_ASSIGNEES as readonly string[]).includes(me)
+    ? (me as ActionAssignee)
+    : "Either";
+
+  const withoutAuxiliary = t.replace(WILL_AS_VERB, " ");
+  if (WILL_AS_NAME.test(withoutAuxiliary)) return "Will";
+  if (/\bchristian\b/.test(t)) return "Christian";
+  if (SPEAKER.test(t)) return speaker;
   return "Either";
 }
 
@@ -137,7 +186,12 @@ function parseIntent(text: string): { intent: CaptureIntent; status: string | nu
   return { intent: "follow_up", status: null, stage: "Worked - Follow Up" };
 }
 
-export function localParse(note: string, lead: Lead, base: Date = new Date()): CapturePlan {
+export function localParse(
+  note: string,
+  lead: Lead,
+  me: string,
+  base: Date = new Date()
+): CapturePlan {
   const clean = note.trim();
   const time = parseTimeframe(clean, base, lead);
   const { intent, status, stage } = parseIntent(clean);
@@ -146,7 +200,7 @@ export function localParse(note: string, lead: Lead, base: Date = new Date()): C
     dueDate: time.date,
     dueLabel: time.label,
     dateExplicit: time.explicit,
-    assignee: parseAssignee(clean),
+    assignee: parseAssignee(clean, me),
     intent,
     status,
     stage,
@@ -157,15 +211,25 @@ export function localParse(note: string, lead: Lead, base: Date = new Date()): C
 
 // Tries a Claude-powered edge function first (real natural-language
 // understanding), falls back to the local parser when it isn't configured.
-export async function interpret(note: string, lead: Lead): Promise<CapturePlan> {
+export async function interpret(note: string, lead: Lead, me: string): Promise<CapturePlan> {
   try {
     const { data, error } = await supabase.functions.invoke("smart-capture", {
       body: { note, lead: { birthday: lead.birthday, name: lead.name }, today: todayStr() },
     });
     if (error || !data || !data.dueDate) throw error || new Error("no plan");
-    return { ...(data as CapturePlan), source: "ai" };
+    const plan = data as CapturePlan;
+    // The model is told the team is two named agents, so it can return a name
+    // that is no longer valid (or, for a third agent, one that was never the
+    // point). An unrecognized assignee becomes a shared task rather than a
+    // silent handoff to whoever the prompt happened to mention.
+    const assignee: ActionAssignee = (ACTION_ASSIGNEES as readonly string[]).includes(
+      plan.assignee
+    )
+      ? plan.assignee
+      : "Either";
+    return { ...plan, assignee, source: "ai" };
   } catch {
-    return localParse(note, lead);
+    return localParse(note, lead, me);
   }
 }
 

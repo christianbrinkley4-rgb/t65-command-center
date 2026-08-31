@@ -43,7 +43,7 @@ export default function SmartCapture({
     setBusy(true);
     setErr(null);
     try {
-      const p = await interpret(note, lead);
+      const p = await interpret(note, lead, me);
       setPlan(p);
       setDueDate(p.dueDate);
       setChannel(p.channel);

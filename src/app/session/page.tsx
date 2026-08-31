@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Phone, PhoneCall, PhoneOff, Play, Voicemail, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
+import { Phone, PhoneCall, Play, Voicemail, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
 import { heldBackCounts, iepPhase, withinCallingHours, scoreLead } from "@/lib/priority";
@@ -18,12 +18,9 @@ import {
 } from "@/lib/dispositions";
 import { logActivity } from "@/lib/sequences";
 import { fetchTemplates, fillTemplate } from "@/lib/templates";
-import { startLine, endLine, dialLead, hangupCall } from "@/lib/telnyx";
-import { agentPhone } from "@/lib/agents";
 import { altPhone, formatPhone } from "@/lib/phone";
 import { useFilterOrigin } from "@/hooks/useFilterOrigin";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
-import { supabase } from "@/lib/supabaseClient";
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
 import SmartCapture from "@/components/SmartCapture";
 import CallHistory from "@/components/CallHistory";
@@ -66,14 +63,6 @@ export default function SessionPage() {
   const [tmplId, setTmplId] = useState("");
   const [copied, setCopied] = useState(false);
   const [apptDt, setApptDt] = useState("");
-  const [callMsg, setCallMsg] = useState<string | null>(null);
-  const [lineId, setLineId] = useState<string | null>(null);
-  const [lineStatus, setLineStatus] = useState<string>("");
-  const [currentCallId, setCurrentCallId] = useState<string | null>(null);
-  // How the Call button dials. "phone" = your own handset via a tel: link,
-  // which is the default because it needs no carrier config and no waiting on
-  // a bridge; "line" is the Telnyx persistent line. Remembered per device.
-  const [callMode, setCallMode] = useState<"phone" | "line">("phone");
   // What was actually said on this call. Typed while you talk, saved with the
   // disposition, so the timeline reads like a conversation and not a list of
   // outcomes. Cleared when the next lead comes up.
@@ -81,33 +70,8 @@ export default function SessionPage() {
   const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem("t65-call-mode");
-    if (saved === "line" || saved === "phone") setCallMode(saved);
-  }, []);
-  function chooseCallMode(m: "phone" | "line") {
-    setCallMode(m);
-    localStorage.setItem("t65-call-mode", m);
-    setCallMsg(null);
-  }
-
-  useEffect(() => {
     fetchTemplates().then(setTemplates).catch(() => {});
   }, []);
-
-  // Watch the persistent line's status live (starting → active → on_call → ended).
-  useEffect(() => {
-    if (!lineId) return;
-    const ch = supabase
-      .channel(`line-${lineId}`)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dial_lines", filter: `id=eq.${lineId}` }, (payload: any) => {
-        const s = payload.new?.status || "";
-        setLineStatus(s);
-        if (s === "ended") setLineId(null);
-        if (s === "active") setCurrentCallId(null); // lead call ended, line free
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [lineId]);
 
   // Session HUD clock.
   useEffect(() => {
@@ -165,12 +129,6 @@ export default function SessionPage() {
   }
 
   function advance(id: string) {
-    // Ending the current lead's call (if one is live) is part of moving on — a
-    // disposition or skip hangs up the call and keeps the agent's line open.
-    if (currentCallId) {
-      void hangupCall(currentCallId);
-      setCurrentCallId(null);
-    }
     markWorked(id);
     setIdx((i) => i + 1);
     setApptDt("");
@@ -230,81 +188,36 @@ export default function SessionPage() {
     } finally { setBusy(false); }
   }
 
-  function onDial() {
-    if (lead?.phone) logActivity(lead.id, "Call", "Dial", `Dialed ${lead.phone}`, me).catch(() => {});
+  // Log the number actually dialed, not the primary. Tapping "2nd" used to
+  // record the cell you didn't call, which makes the trail lie about which
+  // line went unanswered.
+  function onDial(dialed: string) {
+    if (dialed) logActivity(lead!.id, "Call", "Dial", `Dialed ${dialed}`, me).catch(() => {});
   }
 
-  async function hangUp() {
-    if (currentCallId) {
-      await hangupCall(currentCallId);
-      setCurrentCallId(null);
-    }
-    setCallMsg("Call ended — your line is still open. Pick a result, then dial the next.");
-    setTimeout(() => setCallMsg(null), 8000);
-  }
-
-  async function startCallingLine() {
-    const r = await startLine({ agent: me, agentPhone: agentPhone(me) });
-    if (!r.configured) {
-      setCallMsg("Telnyx isn't set up yet — calls use your device dialer. See TELEPHONY_SETUP.md.");
-      return;
-    }
-    if (r.ok === false || !r.lineId) { setCallMsg("Could not start the line."); return; }
-    setLineId(r.lineId);
-    setLineStatus("starting");
-    setCallMsg(`Your phone ${formatPhone(agentPhone(me))} is ringing — answer once to open your line, then hit Call on each lead.`);
-  }
-
-  async function endCallingLine() {
-    if (lineId) await endLine(lineId);
-    setLineId(null);
-    setLineStatus("");
-  }
-
+  // One tap, one handset dial.
+  //
+  // This used to branch three ways through a Telnyx bridge that the team
+  // retired: a per-device mode toggle, a persistent line, a one-shot bridge,
+  // and a fallback to the handset when none of it was configured. Everyone
+  // dials from their own phone, so the fallback was the only path anyone took,
+  // and the rest was a decision at the top of every session with one right
+  // answer plus a button that rang a number out of a hardcoded list.
+  //
   // `alt` dials the second number. Merging duplicates put a lot of real second
   // numbers on the book (same person, two lines from two different lists), and
   // a no-answer on the cell is often a pickup on the landline. Reaching it has
   // to be one tap, not a trip through the drawer.
-  async function bridgeCall(alt = false) {
+  //
+  // The dial is logged BEFORE the handoff: navigating to a tel: URL can take
+  // the tab out from under us, and a call with no row is a call that never
+  // happened as far as the book is concerned.
+  function placeCall(alt = false) {
     if (!lead) return;
     const leadPhone = (alt ? altPhone(lead) : lead.phone) || lead.phone || altPhone(lead) || "";
     if (!leadPhone) return;
-    const first = (lead.name || "the lead").split(" ")[0];
-    onDial();
-
-    // Your own phone: hand off to the handset immediately. No edge function,
-    // no round trip, no waiting to find out Telnyx is switched off — the dial
-    // is still logged, which is the part that matters for the history.
-    if (callMode === "phone") {
-      window.location.href = `tel:${leadPhone}`;
-      return;
-    }
-
-    // Preferred path: dial the lead into the agent's open line.
-    if (lineId) {
-      if (lineStatus === "starting") {
-        setCallMsg("Answer your phone first to open the line, then hit Call.");
-        return;
-      }
-      const r = await dialLead({ leadId: lead.id, leadPhone, agent: me, lineId });
-      if (r.ok === false) {
-        setCallMsg(r.error === "line_not_ready" ? "Line isn't ready yet — answer your phone." : "Dial failed.");
-        return;
-      }
-      if (r.callId) setCurrentCallId(r.callId);
-      setCallMsg(`Dialing ${first} on ${r.from}… they'll drop into your line when they pick up.`);
-      setTimeout(() => setCallMsg(null), 12000);
-      return;
-    }
-
-    // No open line: one-shot bridge, falling back to the device dialer if Telnyx is off.
-    const r = await dialLead({ leadId: lead.id, leadPhone, agent: me, agentPhone: agentPhone(me) });
-    if (!r.configured || r.ok === false) {
-      window.location.href = `tel:${leadPhone}`;
-      return;
-    }
-    setCallMsg(`Ringing your phone ${r.agentPhone} — pick up and we'll connect ${first} on ${r.from}.`);
-    setTimeout(() => setCallMsg(null), 12000);
+    onDial(leadPhone);
+    window.location.href = `tel:${leadPhone}`;
   }
 
   function dropVoicemail() {
@@ -340,8 +253,7 @@ export default function SessionPage() {
       if (k === "u") { if (lastUndo) { e.preventDefault(); void undo(); } return; }
       if (!lead || busy) return;
       if (k >= "1" && k <= "8") { const d = DISPOSITIONS[Number(k) - 1]; if (d) { e.preventDefault(); void doDisposition(d); } }
-      else if (k === "c") { e.preventDefault(); void bridgeCall(); }
-      else if (k === "h") { e.preventDefault(); void hangUp(); }
+      else if (k === "c") { e.preventDefault(); placeCall(); }
       else if (k === "v") { e.preventDefault(); dropVoicemail(); }
       else if (k === "s") { e.preventDefault(); void doSold(); }
       else if (k === "n") {
@@ -500,43 +412,6 @@ export default function SessionPage() {
         </div>
       </div>
 
-      {callMode === "phone" ? (
-        <div className="mb-3 flex items-center justify-between rounded-xl border border-line bg-white px-4 py-2 text-sm shadow-card">
-          <span className="text-worked">
-            Calling from your own phone. Tap Call and your handset dials; the result still logs here.
-          </span>
-          <button
-            onClick={() => chooseCallMode("line")}
-            className="shrink-0 rounded-md border border-line px-2.5 py-1 text-xs text-worked hover:bg-paper"
-          >
-            Use the Telnyx line
-          </button>
-        </div>
-      ) : (
-      <div className="mb-3 flex items-center justify-between rounded-xl border border-line bg-white px-4 py-2 text-sm shadow-card">
-        <span className="text-worked">
-          {lineStatus === "" && "Calls ring your phone per lead (or use your device dialer). Open a line to answer once and stay on."}
-          {lineStatus === "starting" && "Line starting — answer your phone to open it."}
-          {lineStatus === "active" && "Line is live — hit Call on each lead to dial them into your line."}
-          {lineStatus === "on_call" && "On a call. Disposition to free the line for the next dial."}
-        </span>
-        {lineId ? (
-          <button onClick={endCallingLine} className="shrink-0 rounded-md border border-line px-2.5 py-1 text-xs text-worked hover:bg-paper">
-            End line
-          </button>
-        ) : (
-          <div className="flex shrink-0 items-center gap-1.5">
-            <button onClick={startCallingLine} className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-dark">
-              Start calling line
-            </button>
-            <button onClick={() => chooseCallMode("phone")} className="rounded-md border border-line px-2.5 py-1 text-xs text-worked hover:bg-paper">
-              Use my phone
-            </button>
-          </div>
-        )}
-      </div>
-      )}
-
       {lastUndo && (
         <div className="mb-3 flex items-center justify-between rounded-xl border border-line bg-white px-4 py-2 text-sm shadow-card">
           <span className="text-worked">Logged {lastUndo.name}.</span>
@@ -574,7 +449,7 @@ export default function SessionPage() {
           <div className="mt-4 flex gap-2">
             {(lead.phone || lead.phone2) && (
               <button
-                onClick={() => bridgeCall()}
+                onClick={() => placeCall()}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
                 <Phone size={18} /> Call {formatPhone(lead.phone || lead.phone2)} <span className="text-white/60">(C)</span>
@@ -582,7 +457,7 @@ export default function SessionPage() {
             )}
             {lead.phone && altPhone(lead) && (
               <button
-                onClick={() => bridgeCall(true)}
+                onClick={() => placeCall(true)}
                 title={`Try their other number: ${formatPhone(altPhone(lead))}`}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-line px-3 py-3 text-sm font-medium text-worked hover:bg-paper"
               >
@@ -597,17 +472,7 @@ export default function SessionPage() {
             >
               {copied ? <Check size={16} className="text-newlead" /> : <Voicemail size={16} />} VM <span className="text-later">(V)</span>
             </button>
-            {currentCallId && (
-              <button
-                onClick={hangUp}
-                title="Hang up this call, keep your line open"
-                className="flex items-center justify-center gap-1.5 rounded-xl bg-overdue px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
-              >
-                <PhoneOff size={16} /> Hang up <span className="text-white/60">(H)</span>
-              </button>
-            )}
           </div>
-          {callMsg && <p className="mt-2 rounded-lg bg-newlead/10 px-3 py-2 text-xs font-medium text-newlead">{callMsg}</p>}
 
           <div className="mt-4">
             <CallHistory lead={lead} />

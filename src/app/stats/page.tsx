@@ -85,36 +85,9 @@ export default function StatsPage() {
       .then(({ data }) => setKnockLog((data || []) as Activity[]));
   }, [leads]);
 
-  const [calls, setCalls] = useState<any[]>([]);
-  useEffect(() => {
-    const since = new Date();
-    since.setDate(since.getDate() - 30);
-    supabase
-      .from("calls")
-      .select("*")
-      .gte("started_at", since.toISOString())
-      .limit(5000)
-      .then(({ data }) => setCalls(data || []));
-  }, [leads]);
-
-  const callSummary = useMemo(() => {
-    const total = calls.length;
-    const answered = calls.filter((c) => c.answered).length;
-    let talkSec = 0;
-    for (const c of calls) {
-      if (c.answered && c.answered_at && c.ended_at) {
-        talkSec += Math.max(0, (new Date(c.ended_at).getTime() - new Date(c.answered_at).getTime()) / 1000);
-      }
-    }
-    const talkMin = talkSec / 60;
-    return {
-      total,
-      answered,
-      rate: total ? Math.round((answered / total) * 100) : null,
-      talkMin: Math.round(talkMin),
-      estCost: talkMin * 0.015, // ~two bridged legs at Telnyx rates
-    };
-  }, [calls]);
+  // A 30-day query against the carrier's `calls` table used to run here on
+  // every Stats load, to fill the dialer panel. The dialer is retired, so it
+  // fetched an empty set every time and rendered a placeholder. Both are gone.
 
   const scoped = useMemo(() => leads.filter((l) => matchesWho(l, who)), [leads, who]);
 
@@ -321,22 +294,13 @@ export default function StatsPage() {
       {/* Who did what, when it worked, and whether it's holding up. */}
       <ActivityStats />
 
-      {callSummary.total > 0 ? (
-        <div className="mb-4 rounded-xl border border-line bg-white p-4 shadow-card">
-          <p className="text-sm font-semibold text-ink">Dialer calls — last 30 days</p>
-          <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <div><p className="font-display text-2xl font-semibold text-ink">{callSummary.total}</p><p className="text-xs text-worked">calls placed</p></div>
-            <div><p className="font-display text-2xl font-semibold text-ink">{callSummary.answered}</p><p className="text-xs text-worked">answered</p></div>
-            <div><p className="font-display text-2xl font-semibold text-ink">{callSummary.rate == null ? "—" : `${callSummary.rate}%`}</p><p className="text-xs text-worked">answer rate</p></div>
-            <div><p className="font-display text-2xl font-semibold text-ink">{callSummary.talkMin}</p><p className="text-xs text-worked">talk minutes</p></div>
-            <div><p className="font-display text-2xl font-semibold text-ink">${callSummary.estCost.toFixed(2)}</p><p className="text-xs text-worked">est. spend</p></div>
-          </div>
-        </div>
-      ) : (
-        <div className="mb-4 rounded-xl border border-dashed border-line bg-white p-4 text-xs text-later">
-          Answer rate, talk time, and spend show here once the Telnyx dialer is on — add the secrets in Supabase, then place a call from Dial Session. This is where you&apos;ll watch the answer rate climb as the branded local number seasons.
-        </div>
-      )}
+      {/* The carrier call panel used to live here: answer rate, talk minutes
+          and spend, with a dashed placeholder telling you to go add Telnyx
+          secrets in Supabase. The dialer is retired and calls come off personal
+          handsets, so those numbers can never arrive and the placeholder was
+          sending anyone who read it to set up a system that no longer exists.
+          Dial volume and contact rate still come from the activity log, in
+          <ActivityStats/> directly above. */}
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         <StatCard label="Total leads" value={totals.total.toLocaleString()} />
