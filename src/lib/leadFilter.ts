@@ -11,6 +11,7 @@
 //   Within one filter the picks are OR; across filters they are AND.
 
 import { birthMonth, leadLists, mailerDate, mailerLabel, MONTH_UNKNOWN } from "./categories";
+import { classifyLeadResult } from "./callOutcomes";
 import { householdKey } from "./knock";
 import { matchesOccupancy, matchesValueBand, type Occupancy } from "./valueBands";
 import { trustedHomeValue } from "./homeValue";
@@ -31,13 +32,66 @@ export type LeadFilterState = {
   maxMiles: number;
   origin: DistanceOrigin;
   includeUnmapped: boolean;
+  /** How long since anyone worked them. See WORKED_WINDOWS. */
+  worked: string;
+  /** What happened last time. Keys from LEAD_RESULT_OPTIONS; empty = any. */
+  results: string[];
 };
 
 export const emptyFilter: LeadFilterState = {
   cities: [], zips: [], lists: [], months: [], counties: [],
   band: "any", includeUnpriced: true, occupancy: "any",
   maxMiles: 0, origin: "office", includeUnmapped: true,
+  worked: "any", results: [],
 };
+
+/**
+ * How long since anyone worked this person.
+ *
+ * Reads last_contact_date, which a call, a door and a captured note all stamp.
+ * That is deliberate and it is not a compromise: when you are deciding who to
+ * dial in the next hour, someone whose door you knocked yesterday should be
+ * just as suppressed as someone you called yesterday. Hence "worked", not
+ * "called" — the label has to say what the field actually means, or a door
+ * knocked on Tuesday reads as a call made on Tuesday.
+ */
+export const WORKED_WINDOWS: { value: string; label: string }[] = [
+  { value: "any", label: "Worked any time" },
+  { value: "today", label: "Worked today" },
+  { value: "7d", label: "Worked in the last 7 days" },
+  { value: "30d", label: "Worked in the last 30 days" },
+  { value: "over7", label: "Not worked in over a week" },
+  { value: "over30", label: "Not worked in over a month" },
+  { value: "over90", label: "Not worked in over 3 months" },
+  { value: "never", label: "Never worked at all" },
+];
+
+/** Whole days since a YYYY-MM-DD (or ISO) date. Null when there isn't one. */
+export function daysSince(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const d = new Date(String(dateStr).slice(0, 10) + "T00:00:00");
+  if (isNaN(d.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((today.getTime() - d.getTime()) / 86400000);
+}
+
+export function matchesWorked(lead: Lead, window: string): boolean {
+  if (!window || window === "any") return true;
+  const n = daysSince(lead.last_contact_date);
+  if (window === "never") return n === null;
+  // A lead nobody has ever worked is not "not worked in over a week" — it has
+  // its own option, and folding the two together makes the cold-list filters
+  // return the entire untouched book.
+  if (n === null) return false;
+  if (window === "today") return n === 0;
+  if (window === "7d") return n <= 7;
+  if (window === "30d") return n <= 30;
+  if (window === "over7") return n > 7;
+  if (window === "over30") return n > 30;
+  if (window === "over90") return n > 90;
+  return true;
+}
 
 export const cityOf = (l: Lead) => (l.city || "Unknown city").trim();
 export const zipOf = (l: Lead) => (l.zip || "").trim();
@@ -53,7 +107,9 @@ export function activeCount(f: LeadFilterState): number {
     (f.counties.length ? 1 : 0) +
     (f.band !== "any" ? 1 : 0) +
     (f.occupancy !== "any" ? 1 : 0) +
-    (f.maxMiles > 0 ? 1 : 0)
+    (f.maxMiles > 0 ? 1 : 0) +
+    (f.worked !== "any" ? 1 : 0) +
+    (f.results.length ? 1 : 0)
   );
 }
 
@@ -85,6 +141,8 @@ export function matchesFilter(
   if (!matchesValueBand(trustedHomeValue(lead, sharedAddress), f.band, f.includeUnpriced)) return false;
   if (!matchesOccupancy(lead.home_owner_occupied, f.occupancy)) return false;
   if (!withinMiles(lead, origin, f.maxMiles, f.includeUnmapped)) return false;
+  if (!matchesWorked(lead, f.worked)) return false;
+  if (f.results.length && !f.results.includes(classifyLeadResult(lead))) return false;
   return true;
 }
 

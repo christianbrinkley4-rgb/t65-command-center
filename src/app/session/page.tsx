@@ -27,6 +27,7 @@ import CallHistory from "@/components/CallHistory";
 import LeadCardHeader from "@/components/LeadCardHeader";
 import LeadFilters from "@/components/LeadFilters";
 import { emptyFilter, matchesFilter, type LeadFilterState } from "@/lib/leadFilter";
+import { DIALABLE_RESULTS, LEAD_RESULT_OPTIONS, type LeadResult } from "@/lib/callOutcomes";
 import { householdKey, multiUnitAddressKeys } from "@/lib/knock";
 import { trustedHomeValue } from "@/lib/homeValue";
 import type { ScoredLead } from "@/lib/priority";
@@ -98,6 +99,12 @@ export default function SessionPage() {
         .filter((l) => matchesFilter(l, filter, multiUnit.has(householdKey(l)), origin)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [leads, who, worked, seg, filter, multiUnit, origin, segCtx]
+  );
+
+  // Last-result picks the dial queue is going to swallow. See DIALABLE_RESULTS.
+  const parkedPicks = useMemo(
+    () => filter.results.filter((r) => !DIALABLE_RESULTS.includes(r as LeadResult)),
+    [filter.results]
   );
 
   const lead = useMemo<ScoredLead | null>(() => {
@@ -305,9 +312,25 @@ export default function SessionPage() {
             <LeadFilters pool={leads} value={filter} onChange={setFilter} />
           </div>
           <p className="mt-1 text-[11px] text-later">
-            Towns, ZIPs, list, the month they turn 65, home value, how far out they are. Same filters
-            as a door route, so you can build a calling session the same way you build a walk.
+            Towns, ZIPs, list, the month they turn 65, home value, how far out they are, when you
+            last worked them and what came of it. Same filters as a door route, so you can build a
+            calling session the same way you build a walk.
           </p>
+          {/* The dial queue drops closed leads and anything already booked, so a
+              pick like "Not interested" would come back as an empty session with
+              nothing on screen to say why. Say why. */}
+          {parkedPicks.length > 0 && (
+            <p role="status" className="mt-1 text-[11px] leading-relaxed text-due">
+              {parkedPicks.map((r) => LEAD_RESULT_OPTIONS.find((o) => o.value === r)?.label || r).join(", ")}
+              {parkedPicks.length === 1 ? " is not a callable pile" : " are not callable piles"} — the
+              dial queue holds those back. Work them from the Leads tab, which reads the whole book.
+            </p>
+          )}
+          {filter.worked === "today" && (
+            <p role="status" className="mt-1 text-[11px] leading-relaxed text-due">
+              The queue already hides anyone worked today, so this session will come back empty.
+            </p>
+          )}
           {usingFallback && (
             <p role="status" className="mt-1 text-[11px] text-due">
               Still finding your location — measuring from the office until it lands.

@@ -15,11 +15,13 @@ import { mailerLabel } from "@/lib/categories";
 import { MONTH_NAMES, MONTH_UNKNOWN } from "@/lib/categories";
 import { BAND_GROUPS, OCCUPANCY_OPTIONS, VALUE_BANDS, type Occupancy } from "@/lib/valueBands";
 import { DISTANCE_BANDS, type DistanceOrigin } from "@/lib/distance";
+import { LEAD_RESULT_OPTIONS } from "@/lib/callOutcomes";
 import {
   activeCount,
   buildOptions,
   emptyFilter,
   pruneZips,
+  WORKED_WINDOWS,
   type LeadFilterState,
 } from "@/lib/leadFilter";
 import type { Lead } from "@/lib/types";
@@ -91,6 +93,21 @@ export default function LeadFilters({
       label: `${value.maxMiles} mi of ${value.origin === "me" ? "me" : "the office"}`,
       clear: () => set({ maxMiles: 0 }),
     });
+  if (value.worked !== "any")
+    chips.push({
+      label: WORKED_WINDOWS.find((w) => w.value === value.worked)?.label || value.worked,
+      clear: () => set({ worked: "any" }),
+    });
+  // Named when it's one result, because "Said they were interested" is the
+  // whole reason you built the list and "1 result" tells you nothing.
+  if (value.results.length)
+    chips.push({
+      label:
+        value.results.length === 1
+          ? LEAD_RESULT_OPTIONS.find((r) => r.value === value.results[0])?.label || value.results[0]
+          : `${value.results.length} last results`,
+      clear: () => set({ results: [] }),
+    });
 
   const monthOptions = [
     ...MONTH_NAMES.map((m, i) => ({ value: String(i + 1), label: `${m} birthdays` })),
@@ -147,6 +164,36 @@ export default function LeadFilters({
                   <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
+            </div>
+
+            {/* When you last touched them, and what came of it. Together these
+                are how you build a session with one opening line: everyone who
+                said "interested" and hasn't been called in three weeks is a
+                different call from everyone who went to voicemail yesterday. */}
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <select
+                aria-label="Filter by how long since anyone worked them"
+                value={value.worked}
+                onChange={(e) => set({ worked: e.target.value })}
+                className={
+                  value.worked === "any"
+                    ? "rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked"
+                    : "rounded-lg border border-brand bg-brand-light px-2.5 py-1.5 text-xs font-semibold text-brand-dark"
+                }
+              >
+                {WORKED_WINDOWS.map((w) => (
+                  <option key={w.value} value={w.value}>{w.label}</option>
+                ))}
+              </select>
+              <MultiSelect
+                size={size}
+                label="last result"
+                allLabel="Any last result"
+                options={LEAD_RESULT_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
+                selected={value.results}
+                onChange={(results) => set({ results })}
+                searchable={false}
+              />
             </div>
 
             <select

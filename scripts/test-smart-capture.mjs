@@ -226,9 +226,130 @@ for (const [note, expected] of [
   check(`weekday ${JSON.stringify(note)}`, weekdayDelta(note, 1), expected);
 }
 
+// One report, at the very bottom. An early exit here would skip the dial-filter
+// checks entirely whenever anything above failed.
+
+// ── dial filters: what happened last time, and how long ago ──────────────────
+//
+// Six years of status vocabulary from three sources sit in lead.status, so the
+// order of these tests is load-bearing: "Closed - Not Interested" contains
+// "interested", and "Appointment - Verify" contains "appointment". Get the
+// order wrong and a not-interested lead lands in the interested pile, which is
+// the one list you must never dial with a warm opener.
+
+const filterSrc = readFileSync(join(root, "src", "lib", "callOutcomes.ts"), "utf8");
+const testsBlock = filterSrc.match(/LEAD_TESTS[\s\S]*?=\s*\[([\s\S]*?)\n\];/);
+if (!testsBlock) {
+  console.error("\nCould not find LEAD_TESTS in src/lib/callOutcomes.ts.");
+  console.error("If it was renamed or reshaped, update this test to match — do not delete it.");
+  process.exit(1);
+}
+// Parsed per line, not with one pattern over the whole block. The entries are
+// regex literals full of slashes and escapes, and the single-pattern version of
+// this extracted ZERO entries while still reporting a found block — every
+// status then classified as "new" and the failures looked like classifier bugs.
+const LEAD_TESTS = [];
+for (const line of testsBlock[1].split("\n")) {
+  const t = line.trim();
+  if (!t.startsWith("[/")) continue;
+  const close = t.lastIndexOf("/");
+  const rest = t.slice(close + 1);
+  const key = (rest.match(/"([a-z]+)"/) || [])[1];
+  if (!key) continue;
+  LEAD_TESTS.push([new RegExp(t.slice(2, close), (rest.match(/^[gimsuy]*/) || [""])[0]), key]);
+}
+// A silent partial extraction is the failure mode this whole file exists to
+// prevent, so an extraction that comes back short is an error, not a pass.
+if (LEAD_TESTS.length < 8) {
+  console.error(`\nOnly extracted ${LEAD_TESTS.length} LEAD_TESTS entries — the table shape changed.`);
+  process.exit(1);
+}
+
+function classifyLeadResult(lead) {
+  const s = String(lead.status || "").trim();
+  if (s && s.toLowerCase() !== "new") {
+    for (const [re, result] of LEAD_TESTS) if (re.test(s)) return result;
+  }
+  const disp = String(lead.oscr_latest_disp || "").trim();
+  if (disp && disp.toLowerCase() !== "no_disposition") {
+    for (const [re, result] of LEAD_TESTS) if (re.test(disp)) return result;
+  }
+  if ((lead.dials_count || 0) > 0 || lead.last_contact_date) return "noanswer";
+  return "new";
+}
+
+for (const [status, expected] of [
+  // The two that the ordering exists for.
+  ["Closed - Not Interested", "notinterested"],
+  ["Talked - Interested", "interested"],
+  ["Appointment - Verify", "appointment"],
+  ["Appointment Set", "appointment"],
+
+  ["Talked - Not Ready", "notready"],
+  ["Voicemail Left", "voicemail"],
+  ["Voicemail Left , No Answer", "voicemail"],
+  ["No Answer", "noanswer"],
+  ["Closed - Bad Number", "badnumber"],
+  ["Disconnected / Bad Number", "badnumber"],
+  ["Closed - DNC", "dnc"],
+  ["Needs Info - Verify", "needsinfo"],
+  ["Closed - Sold", "sold"],
+  ["Closed - Already Enrolled", "covered"],
+  ["Answered - Spoke to Prospect", "interested"],
+]) {
+  check(`last result ${JSON.stringify(status)}`, classifyLeadResult({ status }), expected);
+}
+
+// A status of "New" is only new if nobody has actually worked it. An OSCR
+// import with nine dials behind it must never read as never-worked.
+check("last result: New with prior dials", classifyLeadResult({ status: "New", dials_count: 9 }), "noanswer");
+check("last result: New, untouched", classifyLeadResult({ status: "New" }), "new");
+check("last result: no status, untouched", classifyLeadResult({}), "new");
+
+const workedSrc = readFileSync(join(root, "src", "lib", "leadFilter.ts"), "utf8");
+if (!/if \(n === null\) return false;/.test(workedSrc)) {
+  console.error("\nmatchesWorked no longer excludes never-worked leads from the 'over N' windows.");
+  console.error("That change makes 'not worked in over a week' return the entire untouched book.");
+  process.exit(1);
+}
+
+function matchesWorked(daysAgo, window) {
+  if (!window || window === "any") return true;
+  const n = daysAgo;
+  if (window === "never") return n === null;
+  if (n === null) return false;
+  if (window === "today") return n === 0;
+  if (window === "7d") return n <= 7;
+  if (window === "30d") return n <= 30;
+  if (window === "over7") return n > 7;
+  if (window === "over30") return n > 30;
+  if (window === "over90") return n > 90;
+  return true;
+}
+
+for (const [daysAgo, window, expected] of [
+  [0, "today", true],
+  [1, "today", false],
+  [3, "7d", true],
+  [8, "7d", false],
+  [8, "over7", true],
+  [7, "over7", false],
+  [45, "over30", true],
+  [100, "over90", true],
+  [null, "never", true],
+  [5, "never", false],
+  // The one that matters: never-worked must NOT fall into the cold windows.
+  [null, "over7", false],
+  [null, "over30", false],
+  [null, "7d", false],
+  [null, "any", true],
+]) {
+  check(`worked ${daysAgo === null ? "never" : daysAgo + "d ago"} vs ${window}`, matchesWorked(daysAgo, window), expected);
+}
+
 if (failures.length) {
-  console.error(`\nSmart Capture: ${failures.length} of ${total} FAILED\n`);
+  console.error(`\n${failures.length} of ${total} FAILED\n`);
   console.error(failures.join("\n"));
   process.exit(1);
 }
-console.log(`Smart Capture: ${pass}/${total} passed (assignee, outcome, timeframe).`);
+console.log(`${pass}/${total} passed — Smart Capture assignee, outcome, timeframe; dial filters.`);
