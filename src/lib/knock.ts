@@ -8,6 +8,7 @@
 
 import { localYmd, plusDays, todayStr } from "./sequences";
 import { writeOrQueue } from "./offline";
+import { supabase } from "./supabaseClient";
 import { canonicalStreet, MULTI_UNIT_LEADS } from "./homeValue";
 import { isClosedStatus, NEEDS_INFO_STAGE, NEEDS_INFO_STATUS } from "./types";
 import type { Activity, Lead, LeadWithBucket } from "./types";
@@ -92,6 +93,69 @@ export async function applyKnock(
     await autoFollowUpOnInterested(lead, me).catch(() => {});
   }
   return leadWrite === "sent" && logWrite === "sent" ? "sent" : "queued";
+}
+
+/**
+ * Attach what they actually said to the knock that was just recorded.
+ *
+ * The outcome is written the instant the button is tapped and is never held
+ * hostage to a note — walking away from a half-typed note must not lose the
+ * knock. So this runs afterwards, on a door that already counts.
+ *
+ * Two writes, deliberately unequal:
+ *
+ *   raw_notes goes through the offline queue and is the one that must not be
+ *   lost. It is what the card shows and what the next agent reads.
+ *
+ *   The activity row's `notes` column is best effort, online only. It is what
+ *   the knock results view reads back (see latestKnockByLead), so filling it in
+ *   is worth doing, but a driveway with no bars must not cost the note. If this
+ *   half fails the note still lives on the lead.
+ *
+ * Nothing here inserts a second activity row. A conversation is ONE knock: the
+ * old separate Note button logged its own row with outcome "Note", which the
+ * knock stats then had to filter back out, so a door you actually talked at
+ * counted as no knock at all.
+ */
+export async function attachKnockNote(
+  lead: Lead,
+  note: string,
+  me: string
+): Promise<"sent" | "queued"> {
+  const text = note.trim();
+  if (!text) return "sent";
+  const stamp = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const prior = (lead.raw_notes || lead.notes || "").trim();
+  const entry = `[${stamp} door · ${me}] ${text}`;
+
+  const res = await writeOrQueue({
+    table: "leads",
+    op: "update",
+    match: { id: lead.id },
+    payload: {
+      raw_notes: prior ? `${entry}\n${prior}` : entry,
+      updated_at: new Date().toISOString(),
+    },
+    label: `Note · ${lead.name || "lead"}`,
+  });
+
+  if (res === "sent") {
+    // Newest Door Knock row for this lead, which is the one just written.
+    try {
+      const { data } = await supabase
+        .from("activity_log")
+        .select("id")
+        .eq("lead_id", lead.id)
+        .eq("activity_type", "Door Knock")
+        .order("activity_date", { ascending: false })
+        .limit(1);
+      const rowId = data?.[0]?.id;
+      if (rowId) await supabase.from("activity_log").update({ notes: text }).eq("id", rowId);
+    } catch {
+      /* raw_notes already has it; the results view just won't show it inline */
+    }
+  }
+  return res;
 }
 
 // ── households ───────────────────────────────────────────────────────────────

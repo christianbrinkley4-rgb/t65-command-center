@@ -509,7 +509,22 @@ export default function SessionPage() {
                 becomes a scheduled, assigned action rather than just text. */}
             {capturing && (
               <div className="mt-2">
-                <SmartCapture lead={lead} onApplied={() => { setCapturing(false); void reload(); }} />
+                {/* Smart Capture is a disposition, so it has to END THE LEAD
+                    like one. It used to close its own panel and reload, which
+                    left you sitting on the same card: the status had been
+                    written, the follow-up scheduled, the activity logged, and
+                    the screen looked exactly as it had before you typed. The
+                    only way to tell it worked was to move on and come back.
+                    advance() is what every other result on this page calls. */}
+                <SmartCapture
+                  lead={lead}
+                  onApplied={() => {
+                    setCapturing(false);
+                    setCounts((c) => ({ ...c, dials: c.dials + 1 }));
+                    advance(lead.id);
+                    void reload();
+                  }}
+                />
               </div>
             )}
           </div>

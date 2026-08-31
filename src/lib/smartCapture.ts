@@ -44,6 +44,13 @@ function nextDate(base: Date, month: number, day: number): Date {
 
 type TimeGuess = { date: string; label: string; explicit: boolean };
 
+// "64 years" in "he's 64 years old" is an age, not a timeframe. Without these
+// the number-and-unit rule matched it and scheduled the callback for August
+// 2090, marked as a firm date so nothing on screen looked wrong. On a book of
+// people turning 65, writing the age in the note is the likeliest thing there is.
+const AGE_TRAILING = /\bold\b/;
+const AGE_LEADING = /\b(is|are|was|'s|age|aged|turns?|turning)\s*$/;
+
 function parseTimeframe(text: string, base: Date, lead: Lead): TimeGuess {
   const t = text.toLowerCase();
   const add = (days: number, label: string): TimeGuess => ({
@@ -52,13 +59,26 @@ function parseTimeframe(text: string, base: Date, lead: Lead): TimeGuess {
     explicit: true,
   });
 
-  // Explicit "in N days/weeks/months/years"
+  // Explicit "in N days/weeks/months/years".
+  //
+  // The age guard is not hypothetical. This matched any number next to a unit
+  // anywhere in the note, so "he's 64 years old" parsed as a timeframe and
+  // scheduled the callback 23,360 days out — August 2090 — and flagged it as a
+  // firm date rather than a guess, so nothing on screen suggested anything was
+  // wrong. On a book of people turning 65, writing their age in the note is the
+  // single most likely thing an agent does.
   const m = t.match(/(\d+)\s*(day|week|month|year)s?/);
   if (m) {
-    const n = Number(m[1]);
-    const unit = m[2];
-    const days = unit === "day" ? n : unit === "week" ? n * 7 : unit === "month" ? n * 30 : n * 365;
-    return add(days, `in ${n} ${unit}${n === 1 ? "" : "s"}`);
+    const at = m.index ?? 0;
+    const before = t.slice(Math.max(0, at - 14), at);
+    const after = t.slice(at + m[0].length, at + m[0].length + 6);
+    const isAge = AGE_TRAILING.test(after) || AGE_LEADING.test(before);
+    if (!isAge) {
+      const n = Number(m[1]);
+      const unit = m[2];
+      const days = unit === "day" ? n : unit === "week" ? n * 7 : unit === "month" ? n * 30 : n * 365;
+      return add(days, `in ${n} ${unit}${n === 1 ? "" : "s"}`);
+    }
   }
 
   if (/before (he|she|they)?\s*turns?\s*65|before 65|ahead of (his|her|their) (65|birthday)/.test(t) && lead.birthday) {
@@ -70,6 +90,41 @@ function parseTimeframe(text: string, base: Date, lead: Lead): TimeGuess {
   }
 
   if (/tomorrow/.test(t)) return add(1, "tomorrow");
+
+  // "Come back Tuesday." The most common thing anyone says at a door or on a
+  // call, and nothing here parsed it: every one of these fell through to the
+  // generic week-out guess, which is most of why the date was usually wrong.
+  //
+  // Bare "mon" / "sat" / "sun" are deliberately not accepted — they turn up
+  // inside "sat down with them" and "sunroom". Full names and the shorthands
+  // people actually write are enough.
+  const WEEKDAYS: Array<[RegExp, number]> = [
+    [/\bsunday\b/, 0],
+    [/\bmonday\b/, 1],
+    [/\btues(day)?\b/, 2],
+    [/\bwed(nes)?(day)?\b/, 3],
+    [/\bthurs(day)?\b/, 4],
+    [/\bfriday\b/, 5],
+    [/\bsaturday\b/, 6],
+  ];
+  for (const [re, target] of WEEKDAYS) {
+    if (!re.test(t)) continue;
+    // Next occurrence, 1 to 7 days out. Saying "Tuesday" on a Tuesday means the
+    // next one, not today — today would have been "later" or a time.
+    let delta = (target - base.getDay() + 7) % 7;
+    if (delta === 0) delta = 7;
+    // "Next Tuesday" when Tuesday is tomorrow means the one after.
+    if (/\bnext\s+\w*(sun|mon|tues|wed|thurs|fri|satur)/.test(t) && delta <= 3) delta += 7;
+    const d = new Date(base);
+    d.setDate(d.getDate() + delta);
+    return {
+      date: ymd(d),
+      // The date is spelled out so a wrong guess is visible at a glance rather
+      // than hidden behind a word.
+      label: d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }),
+      explicit: true,
+    };
+  }
   if (/(couple|few|couple of)\s*days|in a few\b|day or two/.test(t)) return add(3, "in a few days");
   if (/next week|a week|in a week/.test(t)) return add(7, "next week");
   if (/(couple|few|two)\s*weeks/.test(t)) return add(14, "in a couple weeks");
@@ -86,6 +141,28 @@ function parseTimeframe(text: string, base: Date, lead: Lead): TimeGuess {
   if (/summer/.test(t)) return { date: ymd(nextDate(base, 5, 21)), label: "in the summer", explicit: true };
   if (/fall|autumn/.test(t)) return { date: ymd(nextDate(base, 8, 22)), label: "in the fall", explicit: true };
   if (/winter/.test(t)) return { date: ymd(nextDate(base, 11, 21)), label: "in the winter", explicit: true };
+
+  // "On a group plan til March", "call him in January". A month with a
+  // preposition in front of it is a real date and was landing on the generic
+  // guess. The preposition is required: "March" also shows up as a surname and
+  // in "marched right in".
+  const MONTHS = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+  ];
+  const monthHit = t.match(
+    /\b(?:in|til|till|until|by|after|around|early|mid|late)\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/
+  );
+  if (monthHit) {
+    const idx = MONTHS.indexOf(monthHit[1]);
+    // The 1st of that month, this year or next.
+    const d = nextDate(base, idx, 1);
+    return {
+      date: ymd(d),
+      label: d.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+      explicit: true,
+    };
+  }
 
   // MM/DD or Month name day
   const slash = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
@@ -169,12 +246,27 @@ function parseAssignee(text: string, me: string): ActionAssignee {
   return "Either";
 }
 
+// Somebody ELSE already covered them. Tested BEFORE the sale rule, because
+// "already signed up with Humana" and "she signed with another agent" both used
+// to hit a bare /signed/ and close the lead as SOLD: a lost lead recorded as
+// revenue, counted on the Stats sold tile, and pulled out of the queue where it
+// might have been worked again at AEP.
+const ALREADY_COVERED =
+  /already (signed up|enrolled|has|got|have)|signed up (with|through|at|for)|(with|has) another agent|placed with|has an advisor|already covered|(on|for|has|through) (a |an |his |her |their )?group plan|through (his|her|their) (employer|work|union)/;
+
+// A sale is something WE did. The old rule was a bare /\bsold\b/ and a bare
+// /signed/, so "he sold his house last year" and "sold cars for 30 years, nice
+// guy" both closed the lead as a sale.
+const IS_A_SALE =
+  /\bsold (him|her|them|it|the)|wrote (him|her|them|it) up|wrote (him|her|them) (a|the)|\bapp(lication)? (is )?(in|done|submitted|signed)\b|closed the deal|got the sale|took the app|(he|she|they) bought|signed the app|signed with (me|us)/;
+
 function parseIntent(text: string): { intent: CaptureIntent; status: string | null; stage: string | null } {
   const t = text.toLowerCase();
   if (/\bdnc\b|do ?not ?call|don'?t call( me| him| her| again| back)|stop calling|take (me|him|her) off/.test(t))
     return { intent: "dnc", status: "Closed - DNC", stage: "Closed" };
-  if (/\bsold\b|wrote (it|him|her|the|up)|signed|application (in|done)|closed the deal|got the sale/.test(t))
-    return { intent: "sold", status: "Closed - Sold", stage: "Closed" };
+  if (ALREADY_COVERED.test(t))
+    return { intent: "not_interested", status: "Closed - Already Enrolled", stage: "Closed" };
+  if (IS_A_SALE.test(t)) return { intent: "sold", status: "Closed - Sold", stage: "Closed" };
   if (/not interested|no thanks|no thank you|not (a )?fit|wants nothing|hung up mad/.test(t))
     return { intent: "not_interested", status: "Closed - Not Interested", stage: "Closed" };
   if (/(set|schedule|book|booked|scheduled).{0,14}(appointment|appt|meeting|time)|appointment (on|at|for|set)|meeting (on|at|set)|coming (by|over)/.test(t))

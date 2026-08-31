@@ -23,6 +23,7 @@ import { useApp } from "@/lib/context";
 import { supabase } from "@/lib/supabaseClient";
 import {
   applyKnock,
+  attachKnockNote,
   groupByHousehold,
   groupByStreet,
   groupKnockedByDay,
@@ -218,6 +219,11 @@ export default function KnockPage() {
   // Per-door conversation note, captured at the door
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  // The door we just knocked, waiting on "what did they say". Separate from
+  // noteFor (the standalone annotation) because this one is attached to a
+  // result that is already recorded and already counted.
+  const [notePromptFor, setNotePromptFor] = useState<string | null>(null);
+  const [notePromptOutcome, setNotePromptOutcome] = useState("");
   // "Come back Tuesday at 6" — a scheduled return, day and time
   const [followFor, setFollowFor] = useState<string | null>(null);
   const [followWhen, setFollowWhen] = useState("");
@@ -765,6 +771,21 @@ export default function KnockPage() {
         queued,
         prior,
       });
+      // The knock is saved. NOW ask what they said.
+      //
+      // Recording the note used to be a separate button on a separate panel,
+      // and it did not count as a knock: it never stamped last_knock_date or
+      // knock_count, and the stats filtered its "Note" rows out of the door
+      // counts. So the doors where you actually had a conversation, the only
+      // ones worth writing down, were the doors that counted for nothing.
+      //
+      // Asking after the write, never before, keeps the guarantee that matters
+      // in a driveway: walking away mid-sentence still leaves the knock logged.
+      if (!o.doNotKnock) {
+        setNotePromptFor(hh.key);
+        setNotePromptOutcome(o.label);
+        setNoteText("");
+      }
     } catch (e) {
       // applyKnock queues rather than throwing, so reaching here means
       // something structural. Say so instead of looking like it worked.
@@ -824,6 +845,24 @@ export default function KnockPage() {
 
   // Append a dated note. Appending (never replacing) means a second visit
   // can't erase what happened on the first.
+  /** "What did they say" on a door whose result is already in the book. */
+  async function saveKnockNote(hh: Household) {
+    const text = noteText.trim();
+    if (!text || busy) return;
+    setBusy(hh.key);
+    try {
+      const res = await attachKnockNote(hh.primary, text, me);
+      // Show it on the card straight away, against the outcome it belongs to.
+      recordLocally(hh, notePromptOutcome, text);
+      setNotePromptFor(null);
+      setNoteText("");
+      if (res === "sent") await reload();
+      else setRouteErr("Saved on this phone — it'll sync when you have signal.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function saveNote(hh: Household) {
     const text = noteText.trim();
     if (!text || busy) return;
@@ -1218,6 +1257,44 @@ ${prior}` : entry,
           ))}
         </div>
 
+        {/* Recorded. Now, what did they say? */}
+        {notePromptFor === hh.key && (
+          <div className="mt-1.5 rounded-xl border border-newlead/40 bg-newlead/[0.06] p-2">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-newlead">
+              {notePromptOutcome} — saved. What did they say?
+            </p>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              rows={2}
+              autoFocus
+              aria-label={"What was said at " + (lead.name || "this door")}
+              placeholder="Wife handles the insurance, back after 5. On a group plan til March…"
+              className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+            />
+            <div className="mt-1.5 flex gap-1.5">
+              <button
+                onClick={() => saveKnockNote(hh)}
+                disabled={!noteText.trim() || busy === hh.key}
+                className="min-h-11 flex-1 rounded-xl bg-newlead px-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                Save note
+              </button>
+              {/* Skip, not Cancel. The knock is already in the book — this only
+                  decides whether a note goes with it. */}
+              <button
+                onClick={() => {
+                  setNotePromptFor(null);
+                  setNoteText("");
+                }}
+                className="min-h-11 rounded-xl border border-line px-4 text-sm text-worked"
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        )}
+
         {apptFor === hh.key ? (
           <div className="mt-1.5 flex gap-1.5">
             <input
@@ -1269,10 +1346,11 @@ ${prior}` : entry,
                 setNoteFor(noteFor === hh.key ? null : hh.key);
                 setNoteText("");
               }}
-              aria-label={"Add a note for " + (lead.name || "this lead")}
+              aria-label={"Add a standing note for " + (lead.name || "this lead")}
+              title="A standing note about the door itself — gate code, dog, best time. What was said at the door is captured with the result."
               className="flex min-h-11 items-center justify-center gap-1 rounded-xl border border-line bg-paper px-1 text-xs font-medium text-worked active:scale-[0.98]"
             >
-              <StickyNote size={14} aria-hidden /> Note
+              <StickyNote size={14} aria-hidden /> About
             </button>
           </div>
         )}

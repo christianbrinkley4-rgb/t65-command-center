@@ -234,7 +234,15 @@ export default function LeadCard({
         )}
 
         <div className="mt-4">
-          <SmartCapture lead={lead} onApplied={async () => { await reload(); }} />
+          {/* Every other result on this card says what it did. Smart Capture
+              reloaded in silence, which reads as nothing having happened. */}
+          <SmartCapture
+            lead={lead}
+            onApplied={async () => {
+              setMsg("Logged: Smart Capture — status set and the follow-up is scheduled");
+              await reload();
+            }}
+          />
         </div>
 
         <button

@@ -140,7 +140,11 @@ export default function SmartCapture({
                 className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm"
               />
               <span className="text-xs text-worked">{plan.dueLabel}</span>
+              {/* Tomorrow and a couple of days are the two most common
+                  callbacks and both needed the date picker before this. */}
               {[
+                { l: "Tomorrow", n: 1 },
+                { l: "+2d", n: 2 },
                 { l: "+1w", n: 7 },
                 { l: "+1m", n: 30 },
                 { l: "+3m", n: 90 },
