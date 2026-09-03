@@ -21,3 +21,4 @@ mailers/
 *.xlsx
 *.xlsm
 *.xps
+__pycache__/

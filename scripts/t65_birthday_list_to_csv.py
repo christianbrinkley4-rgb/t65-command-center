@@ -40,9 +40,23 @@ FIELDS = [
     "City", "State", "Zip code", "County", "Birthday", "Lead source", "Notes",
 ]
 
-MONTHS = {m: i + 1 for i, m in enumerate(
-    ["january", "february", "march", "april", "may", "june",
-     "july", "august", "september", "october", "november", "december"])}
+MONTH_NAMES = ["january", "february", "march", "april", "may", "june",
+               "july", "august", "september", "october", "november", "december"]
+MONTHS = {m: i + 1 for i, m in enumerate(MONTH_NAMES)}
+
+# The vendor is not consistent about how it writes the month. April and May
+# arrived spelled out ("T65 2092 NC May 1962 Birthdays"); June arrived clipped
+# ("T65 2092 Jun 1962 Birthdays_NC"). Matching only full names read June as no
+# month at all, which does not fail loudly — it labels all 2,203 rows
+# "Imported list" instead of "T65 June", so the month has no source to filter
+# on and the verifier calls every row unlabeled. Abbreviations are matched too,
+# longest first so "sept" is not answered by "sep".
+MONTH_PATTERNS = sorted(
+    list(MONTHS.items())
+    + [(m[:3], i + 1) for i, m in enumerate(MONTH_NAMES)]
+    + [("sept", 9)],
+    key=lambda kv: -len(kv[0]),
+)
 
 
 def text(v):
@@ -57,10 +71,11 @@ def digits(v):
 
 
 def month_year_from_name(filename):
-    """"T65 2092 NC May 1962 Birthdays" -> (5, 1962). The list name is the
-    only trustworthy statement of which month this file is."""
+    """"T65 2092 NC May 1962 Birthdays" -> (5, 1962), and "T65 2092 Jun 1962
+    Birthdays_NC" -> (6, 1962). The list name is the only trustworthy statement
+    of which month this file is."""
     low = filename.lower()
-    month = next((n for m, n in MONTHS.items() if re.search(rf"\b{m}\b", low)), None)
+    month = next((n for m, n in MONTH_PATTERNS if re.search(rf"\b{m}\b", low)), None)
     year = re.search(r"\b(19\d{2})\b", low)
     return month, int(year.group(1)) if year else None
 

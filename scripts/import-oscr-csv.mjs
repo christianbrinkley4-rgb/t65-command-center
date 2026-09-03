@@ -207,6 +207,29 @@ async function main() {
       null;
     const match = candidate && !claimed.has(candidate.id) ? candidate : null;
     if (match) claimed.add(match.id);
+
+    // The same person can appear twice in one file — same name, same number,
+    // two addresses (a house and a PO box, or a second property). One of the
+    // two claims the lead; the other has to be recognised as the same person or
+    // it becomes a duplicate row.
+    //
+    // This key used to be registered only when a row was INSERTED, which made
+    // the importer safe to run once and unsafe to run twice. On a re-run the
+    // first twin MERGES rather than inserts, so the key was never registered,
+    // the second twin couldn't claim the already-claimed lead, and it inserted.
+    // Re-running June created 5 duplicates that way — and every instruction in
+    // this repo, the verifier's own advice included, says to re-run an import
+    // to fill gaps. Registering the key on a merge too makes a second run a
+    // no-op, which is what re-runnable was always supposed to mean.
+    const dupeKey =
+      phone || r["Street"]
+        ? phone
+          ? `${phone}|${nameParts(r["Name"]).first}|${nameParts(r["Name"]).last}`
+          : personKeyOf(r["Name"], r["Street"])
+        : "";
+    if (dupeKey && !match && insertedPeople.has(dupeKey)) { stats.sameFileDupe++; continue; }
+    if (dupeKey) insertedPeople.add(dupeKey);
+
     if (match) {
       const patch = { ...oscrFields };
       // No list: tag. The app stopped reading them on 2026-08-28 — the only
@@ -230,8 +253,27 @@ async function main() {
       // already on file and stops, quietly throwing the file's primary away.
       // That left 123 people across the seven 2026/27 lists holding one line
       // when the list carried two.
+      //
+      // Fill a blank PRIMARY before touching the second slot. There was no rule
+      // for `phone` at all, only for `phone2`, so a lead already in the book
+      // with no number got the file's line written into `phone2` and kept an
+      // empty `phone`. 121 people book-wide ended up that way: the list row
+      // reads "no phone", the CSV export goes out blank, and their only working
+      // number sits in the "2nd" slot. Blanks only — a number already on file
+      // is still never replaced.
+      if (!match.phone) {
+        const first = [r["Primary phone"], r["Secondary phone"]].find((v) => {
+          const d = canonPhone(v);
+          return d && d !== canonPhone(match.phone2);
+        });
+        if (first) patch.phone = fmtPhone(first);
+      }
       if (!match.phone2) {
-        const onFile = new Set([canonPhone(match.phone), canonPhone(match.phone2)].filter(Boolean));
+        // patch.phone counts as on file — otherwise the number just placed in
+        // the primary slot is a candidate to be copied into the second one.
+        const onFile = new Set(
+          [canonPhone(match.phone), canonPhone(patch.phone), canonPhone(match.phone2)].filter(Boolean)
+        );
         const spare = [r["Secondary phone"], r["Primary phone"]].find((v) => {
           const d = canonPhone(v);
           return d && !onFile.has(d);
@@ -246,11 +288,6 @@ async function main() {
     }
 
     if (!phone && !r["Street"]) { stats.skippedNoPhone++; continue; }
-    const dupeKey = phone
-      ? `${phone}|${nameParts(r["Name"]).first}|${nameParts(r["Name"]).last}`
-      : personKeyOf(r["Name"], r["Street"]);
-    if (insertedPeople.has(dupeKey)) { stats.sameFileDupe++; continue; }
-    insertedPeople.add(dupeKey);
     inserts.push({
       source: oscrId ? normalizeSource(`OSCR:${r["Lead source"] || "Unknown"}`) : r["Lead source"] || "Imported list",
       assigned_to: "Both",
@@ -270,7 +307,13 @@ async function main() {
       birthday: r["Birthday"] || null,
       status: "New",
       stage_bucket: "New Prospecting",
-      tags: null,
+      // No list tag (see the note on the update path above), but an EMPTY
+      // ARRAY, not null: leads.tags is a NOT NULL text[]. Writing null used to
+      // work and now takes down the whole insert batch — 2,019 June leads
+      // failed on the first chunk of 200 with "null value in column tags
+      // violates not-null constraint", and the plan printed above it looked
+      // exactly like a successful run.
+      tags: [],
       raw_notes: r["Notes"] || null,
       ...oscrFields,
       do_not_call: isDnc,
