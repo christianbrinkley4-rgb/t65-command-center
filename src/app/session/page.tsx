@@ -62,7 +62,6 @@ export default function SessionPage() {
   const [err, setErr] = useState<string | null>(null);
   const [lastUndo, setLastUndo] = useState<{ snap: LeadSnapshot; name: string; id: string } | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [tmplId, setTmplId] = useState("");
   const [copied, setCopied] = useState(false);
   const [apptDt, setApptDt] = useState("");
   // What was actually said on this call. Typed while you talk, saved with the
@@ -129,8 +128,12 @@ export default function SessionPage() {
   const hasConsent = Boolean(lead && (canText(lead) || consented.has(lead.id)));
   const textOk = Boolean(lead) && hasConsent && !lead!.do_not_call;
   const textBlock = lead && !textOk ? textBlockReason(lead) : null;
+  // Templates are fetched for the voicemail and nothing else now. The opening
+  // script that used to sit on the card is gone: it took up the top third of
+  // the screen, it was the same words every time, and the person reading it
+  // already knows them. What actually needs to be on screen mid-call is who
+  // this is, why they came up, and what happened last time.
   const vmTemplate = templates.find((t) => /voicemail/i.test(t.channel) || /voicemail/i.test(t.name));
-  const activeTemplate = templates.find((t) => t.id === tmplId) || null;
 
   function start() {
     const q = preview;
@@ -141,10 +144,6 @@ export default function SessionPage() {
     setCounts({ dials: 0, contacts: 0, appts: 0, sold: 0 });
     setStarted(true);
     setLastUndo(null);
-    if (!tmplId && templates.length) {
-      const opener = templates.find((t) => /opener|call/i.test(t.name) || t.channel === "Call");
-      if (opener) setTmplId(opener.id);
-    }
   }
 
   function advance(id: string) {
@@ -409,22 +408,6 @@ export default function SessionPage() {
             </p>
           )}
 
-          {templates.length > 0 && (
-            <>
-              <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-worked">Opening script (optional)</label>
-              <select
-                value={tmplId}
-                onChange={(e) => setTmplId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"
-              >
-                <option value="">No script</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.channel} · {t.name}</option>
-                ))}
-              </select>
-            </>
-          )}
-
           <p className="mt-4 text-sm text-worked">
             <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> leads ready in this session.
           </p>
@@ -483,11 +466,6 @@ export default function SessionPage() {
   }
 
   // ---- Active session ----
-  const filledScript =
-    activeTemplate && lead
-      ? fillTemplate(activeTemplate.body, { first: (lead.name || "").split(" ")[0] || "there", name: lead.name || "", me, city: lead.city || "" })
-      : null;
-
   return (
     <div className="mx-auto max-w-2xl">
       {/* HUD */}
@@ -521,24 +499,6 @@ export default function SessionPage() {
           <LeadCardHeader lead={lead} size="lg" />
 
           <p className="mt-2 text-xs text-later">Why now: {(lead._why || []).join(" · ") || "next in line"}</p>
-
-          {filledScript && (
-            <div className="mt-3 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-xl bg-paper px-4 py-3 text-sm text-slate-700">
-              {filledScript}
-            </div>
-          )}
-          {templates.length > 0 && (
-            <select
-              value={tmplId}
-              onChange={(e) => setTmplId(e.target.value)}
-              className="mt-2 w-full rounded-lg border border-line px-2.5 py-1.5 text-xs text-worked"
-            >
-              <option value="">No script on screen</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>{t.channel} · {t.name}</option>
-              ))}
-            </select>
-          )}
 
           {/* Call + voicemail */}
           <div className="mt-4 flex gap-2">
