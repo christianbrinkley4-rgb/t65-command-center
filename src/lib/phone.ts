@@ -53,3 +53,34 @@ export function altPhone(lead: { phone?: string | null; phone2?: string | null }
   if (!p2) return null;
   return samePhone(lead.phone, p2) ? null : p2;
 }
+
+/**
+ * Which of a lead's two numbers to try FIRST.
+ *
+ * Normally the primary, because that is what every list and every import
+ * treats as primary. The exception is worth having: 272 leads in this book
+ * carry a landline as their primary and a mobile as their second, and on this
+ * book a dialed landline turned out to be a dead number 68.8% of the time
+ * against 11.8% for a mobile. Ringing the copper first, finding it dead, and
+ * moving on without noticing the live cell underneath is a lead thrown away
+ * for no reason.
+ *
+ * Only flips on a CONFIRMED pair: a known landline and a known mobile. An
+ * unchecked number, or a competitive-carrier block we deliberately left
+ * unknown, changes nothing and the primary stays the primary.
+ */
+export function bestPhone(lead: {
+  phone?: string | null;
+  phone2?: string | null;
+  phone_type?: string | null;
+  phone2_type?: string | null;
+}): { number: string; swapped: boolean } {
+  const primary = String(lead.phone || "").trim();
+  const second = altPhone(lead) || "";
+  const flip =
+    Boolean(second) &&
+    lead.phone_type === "fixed_line" &&
+    lead.phone2_type === "mobile";
+  if (flip) return { number: second, swapped: true };
+  return { number: primary || second, swapped: false };
+}

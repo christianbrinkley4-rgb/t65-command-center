@@ -9,14 +9,34 @@
 // catch retired people before they go out. Midday catches almost nobody.
 // Late afternoon catches someone home from work, and early evening catches
 // the working spouse, which is who you usually need.
+//
+// The HOURS are no longer a guess. Six weeks of dialing, every call outcome
+// grouped by the hour it was placed in, reach = someone actually picked up:
+//
+//     9am   260 calls    6.5%      2pm    44 calls   13.6%
+//    10am   236 calls   10.6%      3pm    55 calls    5.5%
+//    11am   144 calls    9.0%      4pm    59 calls   15.3%
+//    12pm     1 call     0.0%      5pm   121 calls   10.7%
+//     1pm     9 calls   44.4%      6pm   224 calls    7.1%
+//                                  7pm    29 calls   13.8%
+//
+// Two hours carried nearly half the volume and are among the worst on the
+// board: 9am and 6pm, at 6.5% and 7.1%. The hour directly after each is
+// materially better — 10am at 10.6%, and the 4-5pm block at 15.3% and 10.7%.
+// Retries were being booked at 9:30 and 17:45, which is to say into the two
+// weak hours, several hundred times. Moving them an hour is the cheapest
+// answer-rate change available: no spend, no new number, no extra dials.
+//
+// 1pm and 2pm look strong and are not: nine and forty-four calls. Midday
+// stays out of the retry rotation until there's volume behind it.
 
 export type Slot = { key: string; label: string; hour: number; minute: number };
 
 export const SLOTS: Slot[] = [
-  { key: "morning", label: "morning", hour: 9, minute: 30 },
+  { key: "morning", label: "morning", hour: 10, minute: 15 },
   { key: "midday", label: "midday", hour: 12, minute: 30 },
-  { key: "afternoon", label: "afternoon", hour: 15, minute: 30 },
-  { key: "evening", label: "late afternoon", hour: 17, minute: 45 },
+  { key: "afternoon", label: "afternoon", hour: 16, minute: 15 },
+  { key: "evening", label: "late afternoon", hour: 17, minute: 15 },
 ];
 
 /** Which slot an attempt at this hour belongs to. */
