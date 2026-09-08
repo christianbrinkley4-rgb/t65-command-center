@@ -6,6 +6,27 @@ export type Lead = {
   name: string | null;
   phone: string | null;
   phone2: string | null;
+  /**
+   * What kind of line the number is: "mobile", "fixed_line", "voip",
+   * "toll_free" or "unknown". Null until scripts/scrub-phones.mjs has been
+   * over the row.
+   *
+   * A sort key, never a suppression. See the scrub script for the measurement
+   * behind it and scoreLead for how it's weighted.
+   */
+  phone_type: string | null;
+  phone2_type: string | null;
+  /**
+   * Whether the line is live, from a switch query: "connected",
+   * "disconnected", "busy", "unreachable" or "unknown". A separate question
+   * from phone_type, and only RealPhoneValidation answers it.
+   *
+   * "disconnected" takes the lead out of the dial queue (see buildQueue) but
+   * never closes it. Everything else is informational.
+   */
+  phone_status: string | null;
+  phone2_status: string | null;
+  phone_type_checked_at: string | null;
   email: string | null;
   city: string | null;
   county: string | null;

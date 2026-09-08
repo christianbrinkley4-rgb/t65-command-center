@@ -145,6 +145,32 @@ export function scoreLead(lead: LeadWithBucket): ScoredLead {
     why.push("Tier A");
   }
 
+  // Mobile first.
+  //
+  // Measured on this book, not assumed. Of 25 numbers marked Bad Number after
+  // somebody dialed them, 22 were landlines. Of 25 that produced a real
+  // conversation, 23 were mobiles. The book itself is 38% landline. Turn that
+  // around against a 27% overall dead rate and it says roughly 63% of the
+  // landlines in this book are dead lines, against about 5% of the mobiles.
+  //
+  // The received wisdom is that a 64-year-old answers the landline. Not this
+  // list: a landline on a bought T65 file is usually a stale broker record on
+  // legacy copper. The carrier names give it away, Lumen and Windstream and
+  // North State and Surry Telephone Membership and Yadkin Valley.
+  //
+  // The swing is deliberately kept under the IEP boost. A landline for somebody
+  // turning 65 next month still outranks a mobile for somebody a year out,
+  // because being in the window is the bigger fact. And nobody is removed: an
+  // untyped number, or one from a competitive-carrier block that genuinely
+  // cannot be told apart, scores exactly as it always did.
+  if (lead.phone_type === "mobile") {
+    score += 18;
+    why.push("mobile");
+  } else if (lead.phone_type === "fixed_line") {
+    score -= 25;
+    why.push("landline");
+  }
+
   return { ...lead, _score: score, _why: why };
 }
 
@@ -292,6 +318,20 @@ export function buildQueue(leads: LeadWithBucket[]): ScoredLead[] {
     .filter((l) => !workedToday(l))
     .filter(isDialable)
     .filter((l) => (l.phone || l.phone2))
+    // A line a switch query says is dead. Not a dead lead and not a closed
+    // one: the record is fine, the line is gone. It leaves the dial queue the
+    // same way a missing number does, and stays fully visible on the Leads tab
+    // so a better number can be found for them.
+    //
+    // A lead whose second number hasn't been scrubbed keeps its place, because
+    // "we know this one is dead and haven't checked the other" is not grounds
+    // for dropping someone. Only when BOTH are confirmed dead does the lead
+    // leave the queue.
+    .filter((l) => {
+      if (l.phone_status !== "disconnected") return true;
+      if (!l.phone2) return false;
+      return l.phone2_status !== "disconnected";
+    })
     .map(scoreLead)
     .sort((a, b) => b._score - a._score);
 }
