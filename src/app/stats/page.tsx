@@ -10,6 +10,7 @@ import StatCard from "@/components/StatCard";
 import BarList from "@/components/BarList";
 import Donut from "@/components/Donut";
 import ActivityStats from "@/components/ActivityStats";
+import PeriodScoreboard, { type PeriodKey } from "@/components/PeriodScoreboard";
 import { isDial, isReached } from "@/lib/callOutcomes";
 import { askedNotToBeCalled, onScrubList } from "@/lib/types";
 import type { Activity } from "@/lib/types";
@@ -49,6 +50,17 @@ export default function StatsPage() {
   const { leads, leadsLoading, who, actions } = useApp();
   const [recentActivity, setRecentActivity] = useState<Activity[]>([]);
   const [dialGoal, setDialGoal] = useState(40);
+  // One control at the top of the page drives the scoreboard. Remembered, so
+  // the person who only ever wants the week doesn't reselect it every visit.
+  const [period, setPeriod] = useState<PeriodKey>("day");
+  useEffect(() => {
+    const p = localStorage.getItem("t65-cc-stats-period");
+    if (p === "day" || p === "week" || p === "month") setPeriod(p);
+  }, []);
+  const choosePeriod = (p: PeriodKey) => {
+    setPeriod(p);
+    localStorage.setItem("t65-cc-stats-period", p);
+  };
 
   useEffect(() => {
     const g = Number(localStorage.getItem("t65-cc-dial-goal"));
@@ -59,14 +71,18 @@ export default function StatsPage() {
     localStorage.setItem("t65-cc-dial-goal", String(n));
   };
 
+  // 120 days, not 7. The scoreboard compares this month with last month, and a
+  // seven-day window cannot answer that. The whole activity log is about 3,000
+  // rows, so this is one small fetch and every period below is sliced from it
+  // in memory: switching Today / week / month costs nothing.
   useEffect(() => {
     const since = new Date();
-    since.setDate(since.getDate() - 7);
+    since.setDate(since.getDate() - 120);
     supabase
       .from("activity_log")
       .select("*")
       .gte("activity_date", since.toISOString())
-      .limit(5000)
+      .limit(20000)
       .then(({ data }) => setRecentActivity((data || []) as Activity[]));
   }, [leads]);
 
@@ -112,6 +128,40 @@ export default function StatsPage() {
     const overdue = scoped.filter((l) => l._bucket === "Overdue").length;
     const inNurture = scoped.filter((l) => l._enr && l._enr.status === "active").length;
     return { total, neverDialed, dialsLogged, appointments, closedSold, overdue, inNurture };
+  }, [scoped]);
+
+  /**
+   * The four things that are quietly costing you appointments right now.
+   *
+   * Every other panel on this page describes what happened. This one is a list
+   * of work, and it goes above the charts because a number you can act on
+   * today beats a distribution you can look at.
+   */
+  const leaks = useMemo(() => {
+    const now = Date.now();
+    const interested = scoped.filter(
+      (l) =>
+        /^talked - interested$/i.test(String(l.status || "").trim()) &&
+        (!l.appointment_datetime || new Date(l.appointment_datetime).getTime() < now)
+    );
+    const interestedStale = interested.filter((l) => {
+      const since = l.last_contact_date || l.updated_at;
+      if (!since) return true;
+      return now - new Date(String(since).slice(0, 10) + "T00:00:00").getTime() > 14 * 86400000;
+    });
+    const needsOutcome = scoped.filter(
+      (l) =>
+        l.appointment_datetime &&
+        new Date(l.appointment_datetime).getTime() < now &&
+        /appointment set/i.test(String(l.status || ""))
+    );
+    const overdue = scoped.filter((l) => l._bucket === "Overdue");
+    return {
+      interested: interested.length,
+      interestedStale: interestedStale.length,
+      needsOutcome: needsOutcome.length,
+      overdue: overdue.length,
+    };
   }, [scoped]);
 
   const bySource = useMemo(() => {
@@ -266,6 +316,12 @@ export default function StatsPage() {
         <p className="text-sm text-slate-500">{leadsLoading ? "Loading…" : `${who} scope`}</p>
       </div>
 
+      {/* The funnel for whichever period you picked, against the one before
+          it. Everything else on the page is detail underneath this. */}
+      <div className="mb-6">
+        <PeriodScoreboard period={period} onPeriod={choosePeriod} activity={recentActivity} />
+      </div>
+
       <div className="mb-4 rounded-xl border border-line bg-white p-4 shadow-card">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-sm font-semibold text-ink">Today&apos;s dials</p>
@@ -290,6 +346,40 @@ export default function StatsPage() {
           />
         </div>
       </div>
+
+      {/* Needs doing, not needs reading. Above the charts on purpose. */}
+      {(leaks.interested > 0 || leaks.needsOutcome > 0 || leaks.overdue > 0) && (
+        <div className="mb-6 rounded-xl border border-due/50 bg-white p-4 shadow-card">
+          <p className="mb-3 text-sm font-semibold text-ink">Costing you appointments right now</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {leaks.interested > 0 && (
+              <Link href="/list/?seg=interested" className="rounded-lg border border-line px-3 py-2.5 hover:bg-paper">
+                <p className="font-display text-2xl font-semibold tabular-nums text-ink">{leaks.interested}</p>
+                <p className="text-xs text-worked">said they&apos;re interested</p>
+                <p className="text-[11px] text-later">
+                  {leaks.interestedStale > 0
+                    ? `${leaks.interestedStale} untouched for over two weeks`
+                    : "all touched recently"}
+                </p>
+              </Link>
+            )}
+            {leaks.needsOutcome > 0 && (
+              <Link href="/list/?seg=apptdue" className="rounded-lg border border-line px-3 py-2.5 hover:bg-paper">
+                <p className="font-display text-2xl font-semibold tabular-nums text-ink">{leaks.needsOutcome}</p>
+                <p className="text-xs text-worked">appointments with no outcome</p>
+                <p className="text-[11px] text-later">the show rate below is only as true as these</p>
+              </Link>
+            )}
+            {leaks.overdue > 0 && (
+              <Link href="/list/?seg=overdue" className="rounded-lg border border-line px-3 py-2.5 hover:bg-paper">
+                <p className="font-display text-2xl font-semibold tabular-nums text-ink">{leaks.overdue}</p>
+                <p className="text-xs text-worked">callbacks past their date</p>
+                <p className="text-[11px] text-later">you said you&apos;d ring, and the day has gone</p>
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Who did what, when it worked, and whether it's holding up. */}
       <ActivityStats />
