@@ -22,6 +22,7 @@ import {
   emptyFilter,
   pruneZips,
   WORKED_WINDOWS,
+  LINE_TYPE_FILTERS,
   type LeadFilterState,
 } from "@/lib/leadFilter";
 import type { Lead } from "@/lib/types";
@@ -92,6 +93,11 @@ export default function LeadFilters({
     chips.push({
       label: `${value.maxMiles} mi of ${value.origin === "me" ? "me" : "the office"}`,
       clear: () => set({ maxMiles: 0 }),
+    });
+  if (value.lineType !== "any")
+    chips.push({
+      label: LINE_TYPE_FILTERS.find((t) => t.value === value.lineType)?.label || value.lineType,
+      clear: () => set({ lineType: "any" }),
     });
   if (value.worked !== "any")
     chips.push({
@@ -183,6 +189,25 @@ export default function LeadFilters({
               >
                 {WORKED_WINDOWS.map((w) => (
                   <option key={w.value} value={w.value}>{w.label}</option>
+                ))}
+              </select>
+              {/* Cell or landline. Sits next to the other "who do I dial"
+                  questions rather than off in a settings screen, because on
+                  this book it is the single biggest one: 68.8% of the
+                  landlines anyone dialed were dead numbers against 11.8% of
+                  the mobiles. */}
+              <select
+                aria-label="Filter by whether the number is a mobile or a landline"
+                value={value.lineType}
+                onChange={(e) => set({ lineType: e.target.value })}
+                className={
+                  value.lineType === "any"
+                    ? "rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked"
+                    : "rounded-lg border border-brand bg-brand-light px-2.5 py-1.5 text-xs font-semibold text-brand-dark"
+                }
+              >
+                {LINE_TYPE_FILTERS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
               <MultiSelect

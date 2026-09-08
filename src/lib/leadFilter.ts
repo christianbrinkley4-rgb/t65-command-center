@@ -36,14 +36,62 @@ export type LeadFilterState = {
   worked: string;
   /** What happened last time. Keys from LEAD_RESULT_OPTIONS; empty = any. */
   results: string[];
+  /** Which kinds of line to dial. See LINE_TYPE_FILTERS. */
+  lineType: string;
 };
 
 export const emptyFilter: LeadFilterState = {
   cities: [], zips: [], lists: [], months: [], counties: [],
   band: "any", includeUnpriced: true, occupancy: "any",
   maxMiles: 0, origin: "office", includeUnmapped: true,
-  worked: "any", results: [],
+  worked: "any", results: [], lineType: "any",
 };
+
+/**
+ * Which lines to dial.
+ *
+ * The whole book is typed against public NPA-NXX block assignments, and the
+ * split is not close. Of the landlines in this book that anyone actually
+ * dialed, 68.8% turned out to be dead numbers; for mobiles it was 11.8%. Good
+ * outcomes ran 73 on mobiles against 13 on landlines. So "mobile only" is the
+ * setting most calling sessions want, and it is one pick rather than a
+ * standing argument.
+ *
+ * "Mobile only" is strict: it excludes the competitive-carrier blocks that
+ * hold a mix of ported cells and ported landlines and genuinely cannot be told
+ * apart, because a session you asked to be mobile should be mobile. "Skip
+ * landlines" is the looser version that keeps those unknowns in. Default is
+ * everything, so an untouched filter still never hides anyone.
+ */
+export const LINE_TYPE_FILTERS: { value: string; label: string }[] = [
+  { value: "any", label: "Mobile and landline" },
+  { value: "mobile", label: "Mobile only" },
+  { value: "notlandline", label: "Skip known landlines" },
+  { value: "fixed_line", label: "Landlines only" },
+];
+
+/**
+ * Does either of this lead's numbers satisfy the line-type pick?
+ *
+ * Either, not just the primary: 272 leads carry a landline as their primary
+ * and a mobile as their second, and the Dial Session rings the mobile for
+ * those (see bestPhone). Judging them on the primary alone would filter out
+ * the exact people the swap was built for.
+ */
+export function matchesLineType(lead: Lead, pick: string): boolean {
+  if (!pick || pick === "any") return true;
+  const types = [lead.phone_type, lead.phone2_type].filter(Boolean) as string[];
+  if (pick === "mobile") return types.includes("mobile");
+  if (pick === "fixed_line") return types.includes("fixed_line") && !types.includes("mobile");
+  if (pick === "notlandline") {
+    // Keep anything that isn't known-landline-only: mobiles, unknowns, and
+    // untyped rows. Untyped is not evidence of anything and must not be
+    // treated as a landline.
+    if (!types.length) return true;
+    return types.some((t) => t !== "fixed_line");
+  }
+  return true;
+}
 
 /**
  * How long since anyone worked this person.
@@ -109,7 +157,8 @@ export function activeCount(f: LeadFilterState): number {
     (f.occupancy !== "any" ? 1 : 0) +
     (f.maxMiles > 0 ? 1 : 0) +
     (f.worked !== "any" ? 1 : 0) +
-    (f.results.length ? 1 : 0)
+    (f.results.length ? 1 : 0) +
+    (f.lineType !== "any" ? 1 : 0)
   );
 }
 
@@ -143,6 +192,7 @@ export function matchesFilter(
   if (!withinMiles(lead, origin, f.maxMiles, f.includeUnmapped)) return false;
   if (!matchesWorked(lead, f.worked)) return false;
   if (f.results.length && !f.results.includes(classifyLeadResult(lead))) return false;
+  if (!matchesLineType(lead, f.lineType)) return false;
   return true;
 }
 
