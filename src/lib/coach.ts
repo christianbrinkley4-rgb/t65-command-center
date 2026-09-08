@@ -219,6 +219,15 @@ export function rankNow(
       why.push(IEP_LABEL[phase]);
     }
 
+    // Weights from a logistic regression fitted on 1,996 dialed leads and 134
+    // conversations, not from judgement. Odds against a landline baseline:
+    // mobile 3.25x, CLEC/unknown 2.34x.
+    //
+    // The unknown case is the correction that mattered. It used to score zero,
+    // on the reasoning that a competitive-carrier block could be either kind of
+    // line so we should not guess. The fit says those blocks behave much closer
+    // to a mobile than to a landline, which is not a guess, it is 769 leads in
+    // the 1962 pile that were being under-ranked for false modesty.
     const types = [l.phone_type, l.phone2_type].filter(Boolean);
     if (types.includes("mobile")) {
       score += 30;
@@ -226,6 +235,17 @@ export function rankNow(
     } else if (types.includes("fixed_line")) {
       score -= 40;
       why.push("landline, 69% of which are dead here");
+    } else if (l.phone_type === "unknown") {
+      score += 20;
+      why.push("competitive-carrier line, reaches like a mobile");
+    }
+
+    // Where the lead came from, same fit: a tracker or OSCR lead reaches about
+    // 1.55x a raw bought T65 list. Small next to the line type, and real.
+    const src = String(l.source || "");
+    if (/^TrackerLeads/i.test(src) || /^OSCR/i.test(src)) {
+      score += 15;
+      why.push("worked list, not raw");
     }
 
     if (l._bucket === "New") {
