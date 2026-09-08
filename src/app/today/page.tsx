@@ -1,17 +1,46 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/lib/context";
 import { BUCKET_ORDER, BUCKET_LABEL, BUCKET_COLOR, effectiveDueDate, matchesWho } from "@/lib/buckets";
 import BucketSection from "@/components/BucketSection";
 import LeadPanel from "@/components/LeadPanel";
 import SeasonBanner from "@/components/SeasonBanner";
+import PaceBar from "@/components/PaceBar";
+import { supabase } from "@/lib/supabaseClient";
+import type { Activity } from "@/lib/types";
 import { actionBelongsTo, formatActionDue } from "@/lib/actions";
 import type { LeadWithBucket } from "@/lib/types";
 
 export default function TodayPage() {
   const { leads, leadsLoading, who, actionsError } = useApp();
   const [selected, setSelected] = useState<LeadWithBucket | null>(null);
+
+  // The pace bar measures the whole conversion chain from this, so it needs
+  // the log rather than a summary. About 3,000 rows.
+  const [activity, setActivity] = useState<Activity[]>([]);
+  useEffect(() => {
+    const since = new Date();
+    since.setDate(since.getDate() - 180);
+    supabase
+      .from("activity_log")
+      .select("activity_type,outcome,activity_date,lead_id")
+      .gte("activity_date", since.toISOString())
+      .limit(20000)
+      .then(({ data }) => setActivity((data || []) as Activity[]));
+  }, []);
+
+  // Which leads carry a mobile, so the rates quoted are the rates you get when
+  // you dial the way the queue now orders things.
+  const mobileLeadIds = useMemo(
+    () =>
+      new Set(
+        leads
+          .filter((l) => l.phone_type === "mobile" || l.phone2_type === "mobile")
+          .map((l) => l.id)
+      ),
+    [leads]
+  );
 
   const grouped = useMemo(() => {
     const scoped = leads.filter((l) => matchesWho(l, who));
@@ -109,6 +138,8 @@ export default function TodayPage() {
       </div>
 
       <SeasonBanner />
+
+      <PaceBar activity={activity} mobileLeadIds={mobileLeadIds} />
 
       {interested.length > 0 && (
         <div className="mb-4 overflow-hidden rounded-xl border border-due/50 bg-white shadow-card">
