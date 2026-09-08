@@ -20,6 +20,28 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // next retirement is a one-line change rather than a silent regression.
 const MODEL = "gemini-3.6-flash";
 
+/**
+ * Read a secret, forgiving a name that carries stray whitespace.
+ *
+ * Not defensive programming for its own sake. This project had the key set as
+ * "GEMINI_API_KEY " with a trailing space, pasted in through the dashboard,
+ * where the field shows no quotes and a trailing space is invisible. The key
+ * was present and correct and the feature reported it missing, which is the
+ * worst kind of wrong: the error message was true and useless.
+ *
+ * An exact hit wins. Only if that fails do we scan the env for a name that
+ * trims to the one we want.
+ */
+function secret(name: string): string | undefined {
+  const exact = Deno.env.get(name);
+  if (exact) return exact;
+  for (const [k, v] of Object.entries(Deno.env.toObject())) {
+    if (k.trim() === name && v) return v;
+  }
+  return undefined;
+}
+
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -47,8 +69,8 @@ Deno.serve(async (req: Request) => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-  const key = Deno.env.get("GEMINI_API_KEY");
-  if (!key) return json({ configured: false, reason: "No GEMINI_API_KEY set on this project." });
+  const key = secret("GEMINI_API_KEY");
+  if (!key) return json({ configured: false, reason: "No GEMINI_API_KEY set on this project (checked for stray whitespace in the name too)." });
 
   let payload: { note?: string; lead?: { birthday?: string | null; name?: string | null }; today?: string };
   try {

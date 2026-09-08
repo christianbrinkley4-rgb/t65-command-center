@@ -5,9 +5,37 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // structured lead rows for the Assistant tab to preview and import.
 //
 // Provider order: ANTHROPIC_API_KEY (Claude) first, GEMINI_API_KEY fallback,
-// else { configured: false } and the client uses its local line parser.
+// else a stated reason and the client uses its local line parser.
 // Add either key: Supabase dashboard → Edge Functions → Manage secrets.
-// No redeploy needed.
+//
+// Same three faults as smart-capture, and they hid each other the same way:
+// no key, then a retired gemini-2.0-flash answering 404, then a key set under
+// the name "GEMINI_API_KEY " with a trailing space. Every failure path used to
+// return a bare error code the client swallowed, so all three looked identical
+// from the outside. Each now comes back with a sentence.
+
+const GEMINI_MODEL = "gemini-3.6-flash";
+
+/**
+ * Read a secret, forgiving a name that carries stray whitespace.
+ *
+ * Not defensive programming for its own sake. This project had the key set as
+ * "GEMINI_API_KEY " with a trailing space, pasted in through the dashboard,
+ * where the field shows no quotes and a trailing space is invisible. The key
+ * was present and correct and the feature reported it missing, which is the
+ * worst kind of wrong: the error message was true and useless.
+ *
+ * An exact hit wins. Only if that fails do we scan the env for a name that
+ * trims to the one we want.
+ */
+function secret(name: string): string | undefined {
+  const exact = Deno.env.get(name);
+  if (exact) return exact;
+  for (const [k, v] of Object.entries(Deno.env.toObject())) {
+    if (k.trim() === name && v) return v;
+  }
+  return undefined;
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -40,9 +68,13 @@ Deno.serve(async (req: Request) => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  const geminiKey = Deno.env.get("GEMINI_API_KEY");
-  if (!anthropicKey && !geminiKey) return json({ configured: false });
+  const anthropicKey = secret("ANTHROPIC_API_KEY");
+  const geminiKey = secret("GEMINI_API_KEY");
+  if (!anthropicKey && !geminiKey)
+    return json({
+      configured: false,
+      reason: "No ANTHROPIC_API_KEY or GEMINI_API_KEY on this project (stray whitespace in the name was checked for too).",
+    });
 
   let payload: { text?: string };
   try {
@@ -52,6 +84,8 @@ Deno.serve(async (req: Request) => {
   }
   const text = (payload.text || "").toString().slice(0, 30000);
   if (!text.trim()) return json({ error: "empty" }, 400);
+
+  const failed = (reason: string) => json({ configured: false, reason }, 200);
 
   try {
     let raw = "";
@@ -70,29 +104,42 @@ Deno.serve(async (req: Request) => {
           messages: [{ role: "user", content: `Extract the leads from this text. Return only the JSON.\n\n"""${text}"""` }],
         }),
       });
-      if (!resp.ok) return json({ error: "anthropic_error", status: resp.status }, 200);
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        return failed(`Claude returned ${resp.status}. ${body.slice(0, 160)}`);
+      }
       const data = await resp.json();
       raw = (data.content?.[0]?.text || "").trim();
     } else {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`;
       const resp = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           system_instruction: { parts: [{ text: SYSTEM }] },
           contents: [{ role: "user", parts: [{ text: `Extract the leads. Return only the JSON.\n\n"""${text}"""` }] }],
-          generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
+          // Room to think before answering; a tight cap returns an empty
+          // candidate with finishReason MAX_TOKENS, which reads as a broken
+          // prompt and is not one.
+          generationConfig: { temperature: 0.1, responseMimeType: "application/json", maxOutputTokens: 8192 },
         }),
       });
-      if (!resp.ok) return json({ error: "gemini_error", status: resp.status }, 200);
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        return failed(
+          resp.status === 503
+            ? "Gemini is briefly over capacity. Try again in a moment."
+            : `Gemini returned ${resp.status}. ${body.slice(0, 160)}`
+        );
+      }
       const data = await resp.json();
       raw = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
     }
     const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return json({ error: "parse_error" }, 200);
+    if (!match) return failed("The model replied but not with JSON.");
     const parsed = JSON.parse(match[0]);
     return json({ leads: Array.isArray(parsed.leads) ? parsed.leads : [], provider: anthropicKey ? "claude" : "gemini" });
   } catch (e) {
-    return json({ error: "exception", message: String(e) }, 200);
+    return failed(`Could not reach the model: ${String(e).slice(0, 160)}`);
   }
 });
