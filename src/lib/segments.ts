@@ -158,6 +158,28 @@ export const SEGMENTS: Segment[] = [
     on: ["list"],
   },
   {
+    key: "interested",
+    label: "Interested",
+    // The book, not the queue. This pile exists to answer "who said yes and
+    // what happened to them", and running it through the callable queue would
+    // hide the two cases that matter most: the one you already booked, and the
+    // one whose callback is scheduled for Thursday. Both are still the answer
+    // to the question.
+    source: "book",
+    match: (l) => /^talked - interested$/i.test(String(l.status || "").trim()),
+    // Longest-waiting first. Every other pile sorts by priority score, which
+    // would put a hot IEP lead above someone who said yes five weeks ago and
+    // has been sitting there ever since. Here the waiting IS the problem.
+    sort: (a, b) =>
+      String(a.last_contact_date || a.updated_at || "").localeCompare(
+        String(b.last_contact_date || b.updated_at || "")
+      ),
+    blurb:
+      "Everyone who has actually said they're interested, oldest first. These convert several times better than anything cold, and they go cold on their own if nobody comes back to them.",
+    tone: "warn",
+    on: ["list", "session"],
+  },
+  {
     key: "talked",
     label: "Talked before",
     source: "queue",

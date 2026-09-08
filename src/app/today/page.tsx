@@ -54,6 +54,34 @@ export default function TodayPage() {
       );
   }, [leads, who]);
 
+  /**
+   * Everyone who said they were interested and is still waiting.
+   *
+   * This sits above everything on purpose. These leads were already in the
+   * Overdue bucket, sorted by date alongside several hundred no-answers and
+   * voicemails, which is the same as not being anywhere: 22 people had said
+   * yes and half of them were past their callback date, some by seven weeks.
+   * A lead who has actually said yes is worth more than any number of cold
+   * dials, and it is the one pile that rots if you leave it.
+   *
+   * Anyone with an appointment booked is not waiting on you, so they drop out.
+   */
+  const interested = useMemo(() => {
+    const now = Date.now();
+    return leads
+      .filter((l) => /^talked - interested$/i.test(String(l.status || "").trim()))
+      .filter((l) => matchesWho(l, who))
+      .filter((l) => !l.appointment_datetime || new Date(l.appointment_datetime).getTime() < now)
+      .map((l) => {
+        const since = l.last_contact_date || l.updated_at;
+        const days = since
+          ? Math.floor((now - new Date(String(since).slice(0, 10) + "T00:00:00").getTime()) / 86400000)
+          : null;
+        return { lead: l, days };
+      })
+      .sort((a, b) => (b.days ?? -1) - (a.days ?? -1));
+  }, [leads, who]);
+
   const actionTimeline = useMemo(() => {
     const endOfToday = new Date();
     endOfToday.setHours(23, 59, 59, 999);
@@ -81,6 +109,42 @@ export default function TodayPage() {
       </div>
 
       <SeasonBanner />
+
+      {interested.length > 0 && (
+        <div className="mb-4 overflow-hidden rounded-xl border border-due/50 bg-white shadow-card">
+          <p className="border-b border-line bg-due/10 px-4 py-2.5 text-sm font-semibold text-ink">
+            Interested and waiting on you ({interested.length})
+          </p>
+          {interested.slice(0, 12).map(({ lead, days }) => (
+            <button
+              key={lead.id}
+              onClick={() => setSelected(lead)}
+              className="flex w-full items-center justify-between gap-3 border-b border-line px-4 py-2.5 text-left last:border-b-0 hover:bg-slate-50"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-ink">{lead.name || "Unnamed"}</span>
+                {lead.next_follow_up_note && (
+                  <span className="block truncate text-[11px] text-later">{lead.next_follow_up_note}</span>
+                )}
+              </span>
+              <span
+                className={
+                  days !== null && days >= 14
+                    ? "shrink-0 text-xs font-semibold text-overdue"
+                    : "shrink-0 text-xs font-medium text-worked"
+                }
+              >
+                {days === null ? "no date" : days === 0 ? "today" : `${days}d ago`}
+              </span>
+            </button>
+          ))}
+          {interested.length > 12 && (
+            <p className="px-4 py-2 text-[11px] text-later">
+              {interested.length - 12} more in the Interested list on the Leads tab.
+            </p>
+          )}
+        </div>
+      )}
 
       {appointments.length > 0 && (
         <div className="mb-4 overflow-hidden rounded-xl border border-newlead/40 bg-white shadow-card">
