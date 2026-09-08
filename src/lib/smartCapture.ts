@@ -28,6 +28,15 @@ export type CapturePlan = {
   stage: string | null;
   note: string;
   source: "ai" | "local";
+  /**
+   * True when the fallback ran because the project has no GEMINI_API_KEY, as
+   * opposed to because the model call failed. The difference matters to
+   * whoever is looking at the screen: one is a hiccup, the other means the
+   * feature has never once done what its name says.
+   */
+  unconfigured?: boolean;
+  /** The edge function's own words for why it couldn't read the note. */
+  reason?: string | null;
 };
 
 function ymd(d: Date): string {
@@ -308,6 +317,16 @@ export async function interpret(note: string, lead: Lead, me: string): Promise<C
     const { data, error } = await supabase.functions.invoke("smart-capture", {
       body: { note, lead: { birthday: lead.birthday, name: lead.name }, today: todayStr() },
     });
+    // The edge function answers `{configured: false}` in about 100ms when
+    // GEMINI_API_KEY isn't set on the project, and that is exactly what it has
+    // been doing. Every capture has been running the keyword parser below
+    // while looking, on screen, like it read the sentence. Falling back is
+    // right; doing it silently is not, and it is why this feature reads as
+    // broken rather than as switched off.
+    if (data && data.configured === false) {
+      const local = localParse(note, lead, me);
+      return { ...local, source: "local", unconfigured: true, reason: data.reason || null };
+    }
     if (error || !data || !data.dueDate) throw error || new Error("no plan");
     const plan = data as CapturePlan;
     // The model is told the team is two named agents, so it can return a name

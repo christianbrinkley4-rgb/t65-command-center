@@ -1,12 +1,24 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Smart Capture — Gemini-powered natural-language follow-up parser.
-// Turns a plain-English note into a structured CapturePlan. If GEMINI_API_KEY is
-// not set as a project secret, it returns { configured: false } and the app
-// falls back to its built-in local parser, so the feature always works.
+// Turns a plain-English note into a structured CapturePlan. When it cannot
+// reach the model it says WHY, and the app falls back to its local keyword
+// parser and tells you it did.
 //
-// Turn on real AI: Supabase dashboard → Edge Functions → Manage secrets →
+// Turn it on: Supabase dashboard → Edge Functions → Manage secrets →
 // add GEMINI_API_KEY = <your Google AI Studio key>. No redeploy needed.
+//
+// Two things were broken here and either one alone looked like the same thing.
+// The project had no GEMINI_API_KEY, so this returned in 98ms without reading
+// anything. And the model was pinned to gemini-2.0-flash, which Google has
+// since retired: it now answers 404 telling you to move to gemini-3.6-flash.
+// So setting the key would have fixed nothing, and the failure would still
+// have been invisible, because every one of these paths quietly returned a
+// 200 that the client read as "no plan" and swallowed.
+
+// gemini-2.0-flash is retired and answers 404. Keep this in one place so the
+// next retirement is a one-line change rather than a silent regression.
+const MODEL = "gemini-3.6-flash";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -36,7 +48,7 @@ Deno.serve(async (req: Request) => {
     new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
   const key = Deno.env.get("GEMINI_API_KEY");
-  if (!key) return json({ configured: false });
+  if (!key) return json({ configured: false, reason: "No GEMINI_API_KEY set on this project." });
 
   let payload: { note?: string; lead?: { birthday?: string | null; name?: string | null }; today?: string };
   try {
@@ -50,7 +62,7 @@ Deno.serve(async (req: Request) => {
   const birthday = payload.lead?.birthday || "unknown";
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -62,18 +74,32 @@ Deno.serve(async (req: Request) => {
             parts: [{ text: `Today is ${today}. Lead 65th-birthday date: ${birthday}.\nNote: """${note}"""\nReturn only the JSON.` }],
           },
         ],
-        generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+        // maxOutputTokens is generous on purpose. The plan itself is a couple
+        // of hundred tokens, but this model spends tokens thinking before it
+        // answers, and a tight cap makes it stop mid-thought and return an
+        // empty candidate with finishReason MAX_TOKENS. That reads exactly
+        // like a broken prompt and is not one.
+        generationConfig: { temperature: 0.2, responseMimeType: "application/json", maxOutputTokens: 2048 },
       }),
     });
-    if (!resp.ok) return json({ error: "gemini_error", status: resp.status }, 200);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      return json({
+        configured: false,
+        reason:
+          resp.status === 503
+            ? "Gemini is briefly over capacity. Try again in a moment."
+            : `Gemini returned ${resp.status}. ${body.slice(0, 160)}`,
+      }, 200);
+    }
     const data = await resp.json();
     const text: string = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return json({ error: "parse_error" }, 200);
+    if (!match) return json({ configured: false, reason: "Gemini replied but not with JSON." }, 200);
     const plan = JSON.parse(match[0]);
     plan.source = "ai";
     return json(plan);
   } catch (e) {
-    return json({ error: "exception", message: String(e) }, 200);
+    return json({ configured: false, reason: `Could not reach Gemini: ${String(e).slice(0, 160)}` }, 200);
   }
 });

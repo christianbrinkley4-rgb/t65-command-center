@@ -127,6 +127,18 @@ export default function SmartCapture({
             Here&apos;s what I got{plan.source === "ai" ? " (AI)" : ""}. Tweak anything, then
             confirm.
           </p>
+          {/* Say so. This ran the keyword parser, not the model, and it has
+              been doing that on every capture since the feature shipped
+              because the project has no GEMINI_API_KEY. Reading a plain
+              sentence badly and not mentioning why is what makes a working
+              feature feel broken. */}
+          {plan.unconfigured && (
+            <p role="status" className="rounded-lg bg-due/10 px-2.5 py-2 text-[11px] leading-relaxed text-ink">
+              <span className="font-semibold">Keyword matching, not AI.</span>{" "}
+              {plan.reason || "The smart-capture function could not reach the model."} Everything
+              below still works, it just read the note less carefully than it would have.
+            </p>
+          )}
 
           <div>
             <label className="block text-[11px] font-medium uppercase tracking-wide text-worked">

@@ -74,7 +74,7 @@ Deno.serve(async (req: Request) => {
       const data = await resp.json();
       raw = (data.content?.[0]?.text || "").trim();
     } else {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`;
       const resp = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
