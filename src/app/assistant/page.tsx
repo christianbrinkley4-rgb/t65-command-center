@@ -5,7 +5,7 @@
 // key is configured (Claude first), heuristic parser otherwise, and every
 // import runs through the same dedupe/DNC checks as the Import tab.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Sparkles, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { supabase } from "@/lib/supabaseClient";
@@ -13,11 +13,27 @@ import { parseLeadText, dedupeKey, type ParsedLead, type ParseResult } from "@/l
 import { canonicalPhone, formatPhone } from "@/lib/phone";
 import { enrichUncheckedLeads } from "@/lib/homeValue";
 import { geocodeUncheckedLeads } from "@/lib/geocode";
+import CoachPanel from "@/components/CoachPanel";
+import type { Activity } from "@/lib/types";
 
 type RowState = ParsedLead & { include: boolean; flag: "new" | "existing-phone" | "dnc-phone" };
 
 export default function AssistantPage() {
   const { leads, reload } = useApp();
+
+  // The coach recomputes its hour table from this on every ask, so it has to be
+  // the real log rather than a summary. The whole thing is about 3,000 rows.
+  const [activity, setActivity] = useState<Activity[]>([]);
+  useEffect(() => {
+    const since = new Date();
+    since.setDate(since.getDate() - 180);
+    supabase
+      .from("activity_log")
+      .select("activity_type,outcome,activity_date,lead_id,logged_by")
+      .gte("activity_date", since.toISOString())
+      .limit(20000)
+      .then(({ data }) => setActivity((data || []) as Activity[]));
+  }, []);
   const [text, setText] = useState("");
   const [source, setSource] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -115,10 +131,19 @@ export default function AssistantPage() {
       <div className="mb-4">
         <h1 className="font-display text-2xl font-semibold text-ink">Assistant</h1>
         <p className="mt-1 text-sm text-worked">
-          Paste leads in any shape — a route table from a Word doc, a Nextdoor thread, names and
-          numbers from an email. It comes back as clean rows you approve before anything is saved.
+          Ask it who to call and it answers from your own call history and the hour it is now.
+          Or paste leads in any shape and it turns them into clean rows you approve before
+          anything is saved.
         </p>
       </div>
+
+      {/* Asking comes first. It is the thing you open this tab for most days;
+          importing is the thing you do when a new list arrives. */}
+      <div className="mb-6">
+        <CoachPanel activity={activity} />
+      </div>
+
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-worked">Import leads from pasted text</p>
 
       <div className="rounded-2xl border border-line bg-white p-4 shadow-card">
         <textarea
