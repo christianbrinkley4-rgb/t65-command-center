@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.t65.commandcenter.dialer.ModelsTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-17T22:24:15" hostname="DESKTOP-RQ6AEF0" time="0.17">
-  <properties/>
-  <testcase name="authenticatedRequestsUseBearerAccessToken" classname="com.t65.commandcenter.dialer.ModelsTest" time="0.034"/>
-  <testcase name="queuePutsDueLeadsBeforeNewLeadsAndExcludesClosedDnc" classname="com.t65.commandcenter.dialer.ModelsTest" time="0.135"/>
-  <testcase name="callsAreAllowedOnlyDuringConsumerCallingWindow" classname="com.t65.commandcenter.dialer.ModelsTest" time="0.001"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

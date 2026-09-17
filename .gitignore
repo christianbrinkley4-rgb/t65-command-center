@@ -7,6 +7,9 @@ out
 *.log
 .DS_Store
 *.tsbuildinfo
+android-dialer/.gradle/
+android-dialer/.kotlin/
+android-dialer/app/build/
 
 # These two carry the shared login in plaintext, so they stay on this machine.
 # The scripts already read the password from T65_PASSWORD in the environment,
