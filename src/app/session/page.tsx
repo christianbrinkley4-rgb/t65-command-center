@@ -19,7 +19,7 @@ import { logActivity } from "@/lib/sequences";
 import { fetchTemplates, fillTemplate } from "@/lib/templates";
 import { startLine, endLine, dialLead, hangupCall } from "@/lib/telnyx";
 import { agentPhone } from "@/lib/agents";
-import { altPhone } from "@/lib/phone";
+import { altPhone, formatPhone } from "@/lib/phone";
 import { useFilterOrigin } from "@/hooks/useFilterOrigin";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
 import { supabase } from "@/lib/supabaseClient";
@@ -603,7 +603,7 @@ export default function SessionPage() {
                 onClick={() => bridgeCall()}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
-                <Phone size={18} /> Call {lead.phone || lead.phone2} <span className="text-white/60">(C)</span>
+                <Phone size={18} /> Call {formatPhone(lead.phone || lead.phone2)} <span className="text-white/60">(C)</span>
               </button>
             )}
             {lead.phone && altPhone(lead) && (

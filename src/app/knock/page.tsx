@@ -32,6 +32,7 @@ import { scheduleFollowUp } from "@/lib/actions";
 import { writeOrQueue } from "@/lib/offline";
 import { logActivity, todayStr } from "@/lib/sequences";
 import { iepPhase, monthsToBirthdayMonth, turns65Label } from "@/lib/priority";
+import { formatPhone } from "@/lib/phone";
 import {
   planRoute,
   routeMiles,
@@ -796,8 +797,8 @@ ${prior}` : entry,
               }
               title={
                 dialable.do_not_call
-                  ? dialable.phone + " — on the Do-Not-Call list. Dial only for a real reason."
-                  : String(dialable.phone)
+                  ? formatPhone(dialable.phone) + " — on the Do-Not-Call list. Dial only for a real reason."
+                  : formatPhone(dialable.phone)
               }
             >
               <Phone size={16} aria-hidden />

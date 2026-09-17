@@ -14,7 +14,7 @@ import LeadFilters from "@/components/LeadFilters";
 import { listLabel } from "@/lib/categories";
 import { trustedHomeValue } from "@/lib/homeValue";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
-import { altPhone } from "@/lib/phone";
+import { altPhone, formatPhone } from "@/lib/phone";
 import { logActivity } from "@/lib/sequences";
 
 export default function AutoDialPage() {
@@ -222,7 +222,7 @@ export default function AutoDialPage() {
               onClick={() => dialLeadNow(currentLead)}
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
             >
-              <Phone size={18} /> Call {leadPhone}
+              <Phone size={18} /> Call {formatPhone(leadPhone)}
             </button>
           )}
           {currentLead.phone && altPhone(currentLead) && (

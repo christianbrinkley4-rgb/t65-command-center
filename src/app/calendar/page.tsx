@@ -18,6 +18,7 @@ import { useApp } from "@/lib/context";
 import { effectiveDueDate, matchesWho } from "@/lib/buckets";
 import { localYmd, todayStr } from "@/lib/sequences";
 import { downloadIcs } from "@/lib/calendar";
+import { formatPhone } from "@/lib/phone";
 import { buildQueue, turns65Label } from "@/lib/priority";
 import EditDrawer from "@/components/EditDrawer";
 import type { LeadWithBucket } from "@/lib/types";
@@ -319,7 +320,7 @@ export default function CalendarPage() {
             <div className="flex shrink-0 items-center gap-1">
               {e.lead.phone && (
                 <a
-                  href={`tel:${e.lead.phone}`}
+                  href={`tel:$                  {formatPhone(e.lead.phone)}`}
                   aria-label={`Call ${e.lead.name || "lead"}`}
                   className="rounded-md border border-line p-1.5 text-worked hover:bg-paper"
                 >

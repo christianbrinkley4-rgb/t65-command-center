@@ -11,6 +11,13 @@ export function canonicalPhone(v: string | number | null | undefined): string {
   return d;
 }
 
+/** Display US numbers consistently without changing the value used for dialing. */
+export function formatPhone(v: string | number | null | undefined): string {
+  const d = canonicalPhone(v);
+  if (d.length !== 10) return String(v || "");
+  return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
 export function samePhone(a: string | null | undefined, b: string | null | undefined): boolean {
   const ca = canonicalPhone(a);
   return ca.length === 10 && ca === canonicalPhone(b);
