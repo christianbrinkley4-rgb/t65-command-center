@@ -13,6 +13,7 @@ out
 # which is where it belongs — nothing in this repo needs the literal value.
 README.md
 HANDOFF_FOR_CLAUDE_CODE.md
+!android-dialer/README.md
 
 # Lead data. Names, phones and addresses of real people do not belong in a
 # code repo, private or not.

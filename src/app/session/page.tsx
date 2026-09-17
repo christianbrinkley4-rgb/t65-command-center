@@ -33,6 +33,7 @@ import { householdKey, multiUnitAddressKeys } from "@/lib/knock";
 import { trustedHomeValue } from "@/lib/homeValue";
 import type { ScoredLead } from "@/lib/priority";
 import type { Template } from "@/lib/types";
+import { createDialSession, updateDialSession, closeDialSession, type DialSession } from "@/lib/dialSession";
 
 const SEGMENTS = [
   { key: "all", label: "Everything due" },
@@ -105,6 +106,8 @@ export default function SessionPage() {
   // outcomes. Cleared when the next lead comes up.
   const [note, setNote] = useState("");
   const [capturing, setCapturing] = useState(false);
+  const [sharedSession, setSharedSession] = useState<DialSession | null>(null);
+  const [phoneState, setPhoneState] = useState("idle");
 
   useEffect(() => {
     const saved = localStorage.getItem("t65-call-mode");
@@ -134,6 +137,20 @@ export default function SessionPage() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [lineId]);
+
+  useEffect(() => {
+    if (!sharedSession) return;
+    const ch = supabase
+      .channel(`dial-session-${sharedSession.id}`)
+      .on("postgres_changes", {
+        event: "UPDATE",
+        schema: "public",
+        table: "dial_sessions",
+        filter: `id=eq.${sharedSession.id}`,
+      }, (payload: any) => setPhoneState(payload.new?.phone_state || "idle"))
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [sharedSession]);
 
   // Session HUD clock.
   useEffect(() => {
@@ -177,6 +194,9 @@ export default function SessionPage() {
     setCounts({ dials: 0, contacts: 0, appts: 0, sold: 0 });
     setStarted(true);
     setLastUndo(null);
+    createDialSession(me, q).then(setSharedSession).catch((e) => {
+      setErr(e instanceof Error ? e.message : "Could not connect the phone session.");
+    });
     if (!tmplId && templates.length) {
       const opener = templates.find((t) => /opener|call/i.test(t.name) || t.channel === "Call");
       if (opener) setTmplId(opener.id);
@@ -191,7 +211,23 @@ export default function SessionPage() {
       setCurrentCallId(null);
     }
     markWorked(id);
+    const nextIndex = idx + 1;
     setIdx((i) => i + 1);
+    if (sharedSession) {
+      const nextLeadId = ids[nextIndex] || null;
+      void updateDialSession(sharedSession.id, {
+        current_index: nextIndex,
+        current_lead_id: nextLeadId,
+        phone_command: sharedSession.phone_command + 1,
+        phone_state: "idle",
+      }).then(() => setSharedSession((s) => s ? {
+        ...s,
+        current_index: nextIndex,
+        current_lead_id: nextLeadId,
+        phone_command: s.phone_command + 1,
+        phone_state: "idle",
+      } : s)).catch((e) => setErr(e instanceof Error ? e.message : "Phone session update failed."));
+    }
     setApptDt("");
     setNote("");
     setCapturing(false);
