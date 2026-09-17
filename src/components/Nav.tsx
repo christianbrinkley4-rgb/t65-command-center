@@ -19,6 +19,7 @@ import clsx from "clsx";
 const TABS = [
   { href: "/calendar/", label: "Day" },
   { href: "/session/", label: "Dial" },
+  { href: "/auto-dial/", label: "Auto Dial" },
   { href: "/knock/", label: "Knock" },
   { href: "/list/", label: "Leads" },
   { href: "/stats/", label: "Stats" },
