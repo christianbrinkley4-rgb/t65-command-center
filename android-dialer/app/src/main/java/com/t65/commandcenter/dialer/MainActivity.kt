@@ -48,6 +48,11 @@ class MainActivity : ComponentActivity() {
         showLogin()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (api != null) sessionHandler.post(sessionPoll)
+    }
+
     private fun showLogin() {
         root = LinearLayout(this).vertical(16)
         val email = input("Email", prefs.getString("email", "") ?: "")
@@ -125,8 +130,8 @@ class MainActivity : ComponentActivity() {
                     val lead = session.queue.getOrNull(session.currentIndex)
                     status.text = if (lead == null) "Computer session complete" else
                         "Computer session: ${lead.name ?: "lead"} (${session.currentIndex + 1}/${session.queue.size})"
-                    if (lead != null && session.phoneCommand != lastPhoneCommand && session.phoneState == "idle") {
-                        lastPhoneCommand = session.phoneCommand
+                    if (lead != null && session.phoneCommand != lastPhoneCommand &&
+                        session.phoneState == "idle" && activeLead == null) {
                         startPhoneCall(session, lead)
                     }
                 }
@@ -149,6 +154,8 @@ class MainActivity : ComponentActivity() {
         executor.execute { runCatching { api?.updatePhoneState(session.id, "dialing") } }
         try {
             startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(phone)}")))
+            lastPhoneCommand = session.phoneCommand
+            runOnUiThread { status.text = "Dialing ${lead.name ?: "lead"}…" }
         } catch (e: Exception) {
             executor.execute { runCatching { api?.updatePhoneState(session.id, "error") } }
             status.text = "Could not open the Phone app: ${e.message ?: "call unavailable"}"
@@ -206,10 +213,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onCallState(state: Int) {
-        if (state == TelephonyManager.CALL_STATE_OFFHOOK || state == TelephonyManager.CALL_STATE_RINGING) sawCallState = true
+        val session = phoneSession
+        when (state) {
+            TelephonyManager.CALL_STATE_RINGING -> {
+                sawCallState = true
+                if (session != null) executor.execute { runCatching { api?.updatePhoneState(session.id, "ringing") } }
+                runOnUiThread { status.text = "Phone ringing…" }
+            }
+            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                sawCallState = true
+                if (session != null) executor.execute { runCatching { api?.updatePhoneState(session.id, "connected") } }
+                runOnUiThread { status.text = "Call connected…" }
+            }
+        }
         if (state == TelephonyManager.CALL_STATE_IDLE && sawCallState && activeLead != null) {
             sawCallState = false
-            val session = phoneSession
             activeLead = null
             if (session != null) executor.execute { runCatching { api?.updatePhoneState(session.id, "ended") } }
             runOnUiThread { status.text = "Call ended — disposition it on the computer." }
