@@ -85,6 +85,12 @@ export default function LeadFilters({
       label: `${value.maxMiles} mi of ${value.origin === "me" ? "me" : "the office"}`,
       clear: () => set({ maxMiles: 0 }),
     });
+  if (value.lastDialed !== "any")
+    chips.push({ label: `last dialed: ${value.lastDialed}`, clear: () => set({ lastDialed: "any" }) });
+  if (value.results.length)
+    chips.push({ label: `result: ${value.results.length}`, clear: () => set({ results: [] }) });
+  if (value.dialCount !== "any")
+    chips.push({ label: `dials: ${value.dialCount}`, clear: () => set({ dialCount: "any" }) });
 
   const monthOptions = [
     ...MONTH_NAMES.map((m, i) => ({ value: String(i + 1), label: `${m} birthdays` })),
@@ -141,6 +147,58 @@ export default function LeadFilters({
                   <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <select
+                aria-label="Filter by last dialed"
+                value={value.lastDialed}
+                onChange={(e) => set({ lastDialed: e.target.value as LeadFilterState["lastDialed"] })}
+                className={value.lastDialed === "any" ? "rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked" : "rounded-lg border border-brand bg-brand-light px-2.5 py-1.5 text-xs font-semibold text-brand-dark"}
+              >
+                <option value="any">Last dialed: anytime</option>
+                <option value="never">Never dialed</option>
+                <option value="today">Dialed today</option>
+                <option value="7">Dialed in last 7 days</option>
+                <option value="30">Dialed in last 30 days</option>
+                <option value="older">Dialed more than 30 days ago</option>
+              </select>
+              <select
+                aria-label="Filter by number of dials"
+                value={value.dialCount}
+                onChange={(e) => set({ dialCount: e.target.value as LeadFilterState["dialCount"] })}
+                className={value.dialCount === "any" ? "rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked" : "rounded-lg border border-brand bg-brand-light px-2.5 py-1.5 text-xs font-semibold text-brand-dark"}
+              >
+                <option value="any">Number of dials: any</option>
+                <option value="0">0 dials</option>
+                <option value="1-2">1–2 dials</option>
+                <option value="3+">3+ dials</option>
+                <option value="5+">5+ dials</option>
+              </select>
+            </div>
+
+            <div className="mt-2">
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-worked">Last result</label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ["no-answer", "No answer"],
+                  ["voicemail", "Voicemail"],
+                  ["talked", "Talked"],
+                  ["closed", "Closed"],
+                ].map(([key, label]) => {
+                  const selected = value.results.includes(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => set({ results: selected ? value.results.filter((r) => r !== key) : [...value.results, key] })}
+                      className={selected ? "rounded-lg bg-brand px-2.5 py-1.5 text-xs font-semibold text-white" : "rounded-lg border border-line px-2.5 py-1.5 text-xs text-worked hover:bg-paper"}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <select

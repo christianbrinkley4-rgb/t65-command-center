@@ -30,12 +30,16 @@ export type LeadFilterState = {
   maxMiles: number;
   origin: DistanceOrigin;
   includeUnmapped: boolean;
+  lastDialed: "any" | "never" | "today" | "7" | "30" | "older";
+  results: string[];
+  dialCount: "any" | "0" | "1-2" | "3+" | "5+";
 };
 
 export const emptyFilter: LeadFilterState = {
   cities: [], zips: [], lists: [], months: [], counties: [],
   band: "any", includeUnpriced: true, occupancy: "any",
   maxMiles: 0, origin: "office", includeUnmapped: true,
+  lastDialed: "any", results: [], dialCount: "any",
 };
 
 export const cityOf = (l: Lead) => (l.city || "Unknown city").trim();
@@ -53,6 +57,9 @@ export function activeCount(f: LeadFilterState): number {
     (f.band !== "any" ? 1 : 0) +
     (f.occupancy !== "any" ? 1 : 0) +
     (f.maxMiles > 0 ? 1 : 0)
+    + (f.lastDialed !== "any" ? 1 : 0)
+    + (f.results.length ? 1 : 0)
+    + (f.dialCount !== "any" ? 1 : 0)
   );
 }
 
@@ -86,6 +93,37 @@ export function matchesFilter(
   if (!matchesValueBand(trustedHomeValue(lead, sharedAddress), f.band, f.includeUnpriced)) return false;
   if (!matchesOccupancy(lead.home_owner_occupied, f.occupancy)) return false;
   if (!withinMiles(lead, origin, f.maxMiles, f.includeUnmapped)) return false;
+  const last = lead.last_contact_date || lead.oscr_last_disp_date || null;
+  if (f.lastDialed !== "any") {
+    if (f.lastDialed === "never" && last) return false;
+    if (f.lastDialed !== "never") {
+      if (!last) return false;
+      const day = new Date(`${last.slice(0, 10)}T00:00:00`);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const age = Math.floor((today.getTime() - day.getTime()) / 86400000);
+      if (isNaN(day.getTime())) return false;
+      if (f.lastDialed === "today" && age !== 0) return false;
+      if (f.lastDialed === "7" && (age < 0 || age > 7)) return false;
+      if (f.lastDialed === "30" && (age < 0 || age > 30)) return false;
+      if (f.lastDialed === "older" && age <= 30) return false;
+    }
+  }
+  if (f.results.length) {
+    const result = String(lead.status || lead.oscr_latest_disp || "").trim().toLowerCase();
+    if (!f.results.some((r) => {
+      if (r === "no-answer") return /no answer|no_answer/.test(result);
+      if (r === "voicemail") return /voicemail|vm/.test(result);
+      if (r === "talked") return /talked|interested|not ready|contacted/.test(result);
+      if (r === "closed") return result.startsWith("closed") || /not interested|wrong number|deceased/.test(result);
+      return false;
+    })) return false;
+  }
+  const dials = Number(lead.dials_count || 0);
+  if (f.dialCount === "0" && dials !== 0) return false;
+  if (f.dialCount === "1-2" && (dials < 1 || dials > 2)) return false;
+  if (f.dialCount === "3+" && dials < 3) return false;
+  if (f.dialCount === "5+" && dials < 5) return false;
   return true;
 }
 
