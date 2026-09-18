@@ -137,7 +137,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startPhoneCall(session: PhoneSession, lead: Lead) {
-        val phone = lead.phone?.takeIf(String::isNotBlank) ?: lead.phone2
+        val phone = dialablePhone(lead.phone) ?: dialablePhone(lead.phone2)
         if (phone.isNullOrBlank()) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             activeLead = lead
@@ -162,7 +162,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         val lead = queue.getOrNull(index) ?: run { status.text = "Queue complete"; return }
-        val phone = lead.phone?.takeIf(String::isNotBlank) ?: lead.phone2
+        val phone = dialablePhone(lead.phone) ?: dialablePhone(lead.phone2)
         if (phone.isNullOrBlank()) { index++; startNextCall(agent); return }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             activeLead = lead

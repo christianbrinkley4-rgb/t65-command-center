@@ -1,6 +1,7 @@
 "use client";
 
 import type { LeadWithBucket } from "@/lib/types";
+import { formatPhone } from "@/lib/phone";
 import { nextPendingAction } from "@/lib/actions";
 
 export default function LeadRow({
@@ -47,7 +48,7 @@ export default function LeadRow({
             ? `${String(lead.address).split(",")[0].trim()}, ${lead.city || lead.state || "NC"}`
             : `${lead.city || "—"}, ${lead.state || "NC"}`}
           {" · "}
-          {lead.phone || "no phone"}
+          {formatPhone(lead.phone) || "no phone"}
           {lead.assigned_to && lead.assigned_to !== "Both" ? ` · ${lead.assigned_to}` : ""}
         </p>
       </div>

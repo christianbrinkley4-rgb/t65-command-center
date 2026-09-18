@@ -18,6 +18,7 @@ import LeadAddress from "@/components/LeadAddress";
 import { listLabel } from "@/lib/categories";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
 import { iepPhase, IEP_LABEL, isFresh, turns65Label, withinCallingHours, type ScoredLead } from "@/lib/priority";
+import { formatPhone } from "@/lib/phone";
 
 // Short labels for the one-tap call results, in the order agents actually use.
 const RESULT_LABEL: Record<string, string> = {
@@ -250,14 +251,14 @@ export default function PowerListRow({
                 onClick={() => call(dialNum)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand/10 px-2.5 py-1.5 text-xs font-semibold text-brand-dark transition hover:bg-brand hover:text-white"
               >
-                <Phone size={12} /> {dialNum}
+                <Phone size={12} /> {formatPhone(dialNum)}
               </a>
             ) : (
               <span
                 className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs text-later"
                 title="Outside the 8am–9pm calling window"
               >
-                <Phone size={12} /> {dialNum}
+                <Phone size={12} /> {formatPhone(dialNum)}
               </span>
             )
           ) : (

@@ -54,6 +54,9 @@ fun isClosed(status: String?): Boolean {
 fun canonicalPhone(phone: String?): String =
     phone.orEmpty().filter(Char::isDigit).takeLast(10)
 
+fun dialablePhone(phone: String?): String? =
+    canonicalPhone(phone).takeIf { it.length == 10 }
+
 fun buildDialQueue(leads: List<Lead>, worked: Set<String>, today: String): List<Lead> {
     val dncPhones = leads.asSequence()
         .filter { it.doNotCall }

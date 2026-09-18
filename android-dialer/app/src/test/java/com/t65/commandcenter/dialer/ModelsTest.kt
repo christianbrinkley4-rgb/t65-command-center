@@ -32,4 +32,10 @@ class ModelsTest {
         assertEquals(false, withinCallingHours(21))
     }
 
+    @Test
+    fun formattedSessionNumbersRemainDialable() {
+        assertEquals("2025550100", dialablePhone("202-555-0100"))
+        assertEquals(null, dialablePhone("not a phone"))
+    }
+
 }

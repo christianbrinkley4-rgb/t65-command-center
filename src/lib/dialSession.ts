@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabaseClient";
 import type { ScoredLead } from "@/lib/priority";
+import { formatPhone } from "@/lib/phone";
 
 export type DialSession = {
   id: string;
@@ -21,8 +22,8 @@ export async function createDialSession(agent: string, queue: ScoredLead[]) {
   const rows = queue.map((lead) => ({
     id: lead.id,
     name: lead.name,
-    phone: lead.phone,
-    phone2: lead.phone2,
+    phone: formatPhone(lead.phone),
+    phone2: formatPhone(lead.phone2),
   }));
   const { data, error } = await supabase
     .from("dial_sessions")

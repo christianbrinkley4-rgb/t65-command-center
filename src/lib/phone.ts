@@ -11,6 +11,12 @@ export function canonicalPhone(v: string | number | null | undefined): string {
   return d;
 }
 
+export function formatPhone(v: string | number | null | undefined): string {
+  const raw = v === null || v === undefined ? "" : String(v).trim();
+  const d = canonicalPhone(raw);
+  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : raw;
+}
+
 export function samePhone(a: string | null | undefined, b: string | null | undefined): boolean {
   const ca = canonicalPhone(a);
   return ca.length === 10 && ca === canonicalPhone(b);

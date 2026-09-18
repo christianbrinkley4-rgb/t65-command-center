@@ -33,6 +33,7 @@ import { householdKey, multiUnitAddressKeys } from "@/lib/knock";
 import { trustedHomeValue } from "@/lib/homeValue";
 import type { ScoredLead } from "@/lib/priority";
 import type { Template } from "@/lib/types";
+import { formatPhone } from "@/lib/phone";
 import { createDialSession, updateDialSession, closeDialSession, type DialSession } from "@/lib/dialSession";
 
 const SEGMENTS = [
@@ -639,13 +640,13 @@ export default function SessionPage() {
                 onClick={() => bridgeCall()}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
-                <Phone size={18} /> Call {lead.phone || lead.phone2} <span className="text-white/60">(C)</span>
+                <Phone size={18} /> Call {formatPhone(lead.phone || lead.phone2)} <span className="text-white/60">(C)</span>
               </button>
             )}
             {lead.phone && altPhone(lead) && (
               <button
                 onClick={() => bridgeCall(true)}
-                title={`Try their other number: ${altPhone(lead)}`}
+                title={`Try their other number: ${formatPhone(altPhone(lead))}`}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-line px-3 py-3 text-sm font-medium text-worked hover:bg-paper"
               >
                 <PhoneCall size={16} /> 2nd
