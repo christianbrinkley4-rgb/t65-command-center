@@ -16,6 +16,7 @@ import { applyApptOutcome, APPT_OUTCOMES } from "@/lib/dispositions";
 import { fetchTemplates, fillTemplate } from "@/lib/templates";
 import ActionPlanner from "@/components/ActionPlanner";
 import SmartCapture from "@/components/SmartCapture";
+import { formatPhone } from "@/lib/phone";
 import { zipOf } from "@/components/LeadAddress";
 import { altPhone } from "@/lib/phone";
 import { listLabel } from "@/lib/categories";
@@ -453,7 +454,7 @@ export default function EditDrawer({
                 onClick={() => logDial(lead.phone!)}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand py-2 text-sm font-medium text-white hover:bg-brand-dark"
               >
-                <Phone size={14} /> {lead.phone}
+                <Phone size={14} /> {formatPhone(lead.phone)}
               </a>
             )}
             {altPhone(lead) && (

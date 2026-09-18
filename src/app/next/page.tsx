@@ -13,6 +13,7 @@ import ActionPlanner, { actionInDays } from "@/components/ActionPlanner";
 import SeasonBanner from "@/components/SeasonBanner";
 import LeadAddress, { zipOf } from "@/components/LeadAddress";
 import { listLabel } from "@/lib/categories";
+import { formatPhone } from "@/lib/phone";
 import CallHistory from "@/components/CallHistory";
 import { trustedHomeValue } from "@/lib/homeValue";
 import type { Disposition, LeadSnapshot } from "@/lib/dispositions";
@@ -312,7 +313,7 @@ export default function NextUpPage() {
                 onClick={() => onDial(lead.phone!)}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
-                <Phone size={18} /> {lead.phone}
+                <Phone size={18} /> {formatPhone(lead.phone)}
               </a>
             )}
             {lead.phone2 && (
@@ -321,7 +322,7 @@ export default function NextUpPage() {
                 onClick={() => onDial(lead.phone2!)}
                 className="flex items-center justify-center gap-2 rounded-xl border border-line px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                <PhoneCall size={16} /> {lead.phone2}
+                <PhoneCall size={16} /> {formatPhone(lead.phone2)}
               </a>
             )}
           </div>
