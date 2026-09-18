@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Phone, PhoneCall, PhoneOff, Play, Voicemail, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { buildQueue, iepPhase, IEP_LABEL, isFresh, withinCallingHours, scoreLead } from "@/lib/priority";
+import { buildDialQueue, nextDialIndex, iepPhase, IEP_LABEL, isFresh, withinCallingHours, scoreLead } from "@/lib/priority";
 import {
   applyDisposition,
   DISPOSITIONS,
@@ -19,7 +19,7 @@ import { logActivity } from "@/lib/sequences";
 import { fetchTemplates, fillTemplate } from "@/lib/templates";
 import { startLine, endLine, dialLead, hangupCall } from "@/lib/telnyx";
 import { agentPhone } from "@/lib/agents";
-import { altPhone, formatPhone } from "@/lib/phone";
+import { otherLeadPhone, formatPhone } from "@/lib/phone";
 import { useFilterOrigin } from "@/hooks/useFilterOrigin";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
 import { supabase } from "@/lib/supabaseClient";
@@ -31,7 +31,7 @@ import LeadFilters from "@/components/LeadFilters";
 import { emptyFilter, matchesFilter, type LeadFilterState } from "@/lib/leadFilter";
 import { householdKey, multiUnitAddressKeys } from "@/lib/knock";
 import { trustedHomeValue } from "@/lib/homeValue";
-import type { ScoredLead } from "@/lib/priority";
+import type { ScoredLead, DialQueueEntry } from "@/lib/priority";
 import type { Template } from "@/lib/types";
 
 const SEGMENTS = [
@@ -80,14 +80,14 @@ export default function SessionPage() {
   const [seg, setSeg] = useState<SegKey>("all");
   const [filter, setFilter] = useState<LeadFilterState>({ ...emptyFilter });
   const [started, setStarted] = useState(false);
-  const [ids, setIds] = useState<string[]>([]);
+  const [ids, setIds] = useState<{ id: string; phone: string }[]>([]);
   const [idx, setIdx] = useState(0);
   const [startTime, setStartTime] = useState(0);
   const [now, setNow] = useState(0);
   const [counts, setCounts] = useState({ dials: 0, contacts: 0, appts: 0, sold: 0 });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [lastUndo, setLastUndo] = useState<{ snap: LeadSnapshot; name: string; id: string } | null>(null);
+  const [lastUndo, setLastUndo] = useState<{ snap: LeadSnapshot; name: string; id: string; index: number } | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [tmplId, setTmplId] = useState("");
   const [copied, setCopied] = useState(false);
@@ -149,17 +149,17 @@ export default function SessionPage() {
   const { origin, usingFallback } = useFilterOrigin(filter);
 
   const preview = useMemo(() => {
-    let q = buildQueue(leads.filter((l) => matchesWho(l, who))).filter((l) => !worked.has(l.id));
+    let q = buildDialQueue(leads.filter((l) => matchesWho(l, who))).filter((l) => !worked.has(l.id));
     if (seg !== "all") q = q.filter((l) => inSeg(l, seg));
     return q.filter((l) => matchesFilter(l, filter, multiUnit.has(householdKey(l)), origin));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, who, worked, seg, filter, multiUnit, origin]);
 
-  const lead = useMemo<ScoredLead | null>(() => {
+  const lead = useMemo<DialQueueEntry | null>(() => {
     if (!started) return null;
     for (let i = idx; i < ids.length; i++) {
-      const l = leads.find((x) => x.id === ids[i]);
-      if (l) return scoreLead(l);
+      const l = leads.find((x) => x.id === ids[i].id);
+      if (l) return { ...scoreLead(l), _queuePhone: ids[i].phone, _queueKey: `${l.id}:${ids[i].phone}` };
     }
     return null;
   }, [started, ids, idx, leads]);
@@ -170,7 +170,7 @@ export default function SessionPage() {
 
   function start() {
     const q = preview;
-    setIds(q.map((l) => l.id));
+    setIds(q.map((l) => ({ id: l.id, phone: l._queuePhone })));
     setIdx(0);
     setStartTime(Date.now());
     setNow(Date.now());
@@ -183,15 +183,16 @@ export default function SessionPage() {
     }
   }
 
-  function advance(id: string) {
+  function advance(id: string, finishLead = false) {
     // Ending the current lead's call (if one is live) is part of moving on — a
     // disposition or skip hangs up the call and keeps the agent's line open.
     if (currentCallId) {
       void hangupCall(currentCallId);
       setCurrentCallId(null);
     }
-    markWorked(id);
-    setIdx((i) => i + 1);
+    const nextIndex = nextDialIndex(ids, idx, finishLead);
+    if (finishLead || !ids.slice(nextIndex).some((entry) => entry.id === id)) markWorked(id);
+    setIdx(nextIndex);
     setApptDt("");
     setNote("");
     setCapturing(false);
@@ -212,8 +213,9 @@ export default function SessionPage() {
         appts: c.appts,
         sold: c.sold,
       }));
-      setLastUndo({ snap, name, id: lead.id });
-      advance(lead.id);
+      setLastUndo({ snap, name, id: lead.id, index: idx });
+      await reload();
+      advance(lead.id, ["int", "nr", "ni", "info"].includes(d.key));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -227,8 +229,8 @@ export default function SessionPage() {
     try {
       await setAppointment(lead, apptDt, me);
       setCounts((c) => ({ ...c, dials: c.dials + 1, contacts: c.contacts + 1, appts: c.appts + 1 }));
-      const id = lead.id; setLastUndo({ snap: snapshotLead(lead), name: lead.name || "lead", id });
-      advance(id);
+      const id = lead.id; setLastUndo({ snap: snapshotLead(lead), name: lead.name || "lead", id, index: idx });
+      advance(id, true);
     } finally { setBusy(false); }
   }
 
@@ -239,13 +241,13 @@ export default function SessionPage() {
       const snap = snapshotLead(lead); const id = lead.id; const name = lead.name || "lead";
       await markSold(lead, me);
       setCounts((c) => ({ ...c, dials: c.dials + 1, contacts: c.contacts + 1, sold: c.sold + 1 }));
-      setLastUndo({ snap, name, id });
-      advance(id);
+      setLastUndo({ snap, name, id, index: idx });
+      advance(id, true);
     } finally { setBusy(false); }
   }
 
-  function onDial() {
-    if (lead?.phone) logActivity(lead.id, "Call", "Dial", `Dialed ${lead.phone}`, me).catch(() => {});
+  function onDial(phone = lead?._queuePhone) {
+    if (lead && phone) logActivity(lead.id, "Call", "Dial", `Dialed ${phone}`, me).catch(() => {});
   }
 
   async function hangUp() {
@@ -281,10 +283,10 @@ export default function SessionPage() {
   // to be one tap, not a trip through the drawer.
   async function bridgeCall(alt = false) {
     if (!lead) return;
-    const leadPhone = (alt ? altPhone(lead) : lead.phone) || lead.phone || altPhone(lead) || "";
+    const leadPhone = (alt ? otherLeadPhone(lead, lead._queuePhone) : lead._queuePhone) || lead._queuePhone;
     if (!leadPhone) return;
     const first = (lead.name || "the lead").split(" ")[0];
-    onDial();
+    onDial(leadPhone);
 
     // Your own phone: hand off to the handset immediately. No edge function,
     // no round trip, no waiting to find out Telnyx is switched off — the dial
@@ -338,7 +340,7 @@ export default function SessionPage() {
       await revertLead(lastUndo.snap, me);
       unmarkWorked(lastUndo.id);
       // step back so the reverted lead is shown again
-      setIdx((i) => Math.max(0, i - 1));
+      setIdx(lastUndo.index);
       setLastUndo(null);
     } finally { setBusy(false); }
   }
@@ -432,7 +434,7 @@ export default function SessionPage() {
           )}
 
           <p className="mt-4 text-sm text-worked">
-            <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> leads ready in this session.
+            <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> numbers ready in this session.
           </p>
           <button
             onClick={start}
@@ -603,16 +605,16 @@ export default function SessionPage() {
                 onClick={() => bridgeCall()}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
-                <Phone size={18} /> Call {formatPhone(lead.phone || lead.phone2)} <span className="text-white/60">(C)</span>
+                <Phone size={18} /> Call {formatPhone(lead._queuePhone)} <span className="text-white/60">(C)</span>
               </button>
             )}
-            {lead.phone && altPhone(lead) && (
+            {otherLeadPhone(lead, lead._queuePhone) && (
               <button
                 onClick={() => bridgeCall(true)}
-                title={`Try their other number: ${altPhone(lead)}`}
+                title={`Try their other number: ${otherLeadPhone(lead, lead._queuePhone)}`}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-line px-3 py-3 text-sm font-medium text-worked hover:bg-paper"
               >
-                <PhoneCall size={16} /> 2nd
+                <PhoneCall size={16} /> Other
               </button>
             )}
             <button

@@ -443,7 +443,7 @@ export default function EditDrawer({
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {(lead.do_not_call || lead._dncSuppressed) && (
             <div className="rounded-lg border border-overdue/40 bg-overdue-50 px-3 py-2 text-xs font-semibold text-overdue">
-              DNC — this {lead._dncSuppressed && !lead.do_not_call ? "number is on your" : "lead is on your"} Do-Not-Call list. It&apos;s kept out of the calling queue; only dial for a real reason (existing client, they asked you to).
+              DNC — this {lead._dncSuppressed && !lead.do_not_call ? "number is on your" : "lead is on your"} Do-Not-Call list. Its phone numbers remain in the calling queue.
             </div>
           )}
           <div className="flex gap-2">

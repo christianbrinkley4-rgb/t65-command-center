@@ -1,3 +1,4 @@
+import { leadPhones } from "./phone";
 import { effectiveDueDate } from "./buckets";
 import { formatActionDue, nextPendingAction } from "./actions";
 import { hasPriorWork, isClosedStatus, needsInfo } from "./types";
@@ -151,9 +152,9 @@ export function scoreLead(lead: LeadWithBucket): ScoredLead {
 // The full ranked queue: every workable lead, best first. Due work floats to
 // the top; when it runs out the queue flows into never-dialed leads, so it
 // never comes back empty.
-// A lead is dialable only if neither it nor any lead sharing its phone is DNC.
+// DNC metadata never filters a number out of the call queue.
 export function isDialable(lead: LeadWithBucket): boolean {
-  return !lead.do_not_call && !lead._dncSuppressed;
+  return leadPhones(lead).length > 0;
 }
 
 /**
@@ -180,7 +181,7 @@ export function isFresh(lead: LeadWithBucket): boolean {
 
 export function buildQueue(leads: LeadWithBucket[]): ScoredLead[] {
   return leads
-    .filter((l) => l._bucket !== "Closed")
+    .filter((l) => l._bucket !== "Closed" || /^(?:closed\s*[-:]\s*)?(?:dnc|do[ -]?not[ -]?call)$/i.test(String(l.status || "").trim()))
     // The tracker years used their own words for dead: "Not Interested",
     // "Wrong Person". A "Closed -" prefix check alone left them in the queue.
     .filter((l) => !isClosedStatus(l.status))
@@ -199,4 +200,19 @@ export function buildQueue(leads: LeadWithBucket[]): ScoredLead[] {
 export function withinCallingHours(now: Date = new Date()): boolean {
   const h = now.getHours();
   return h >= 8 && h < 21;
+}
+
+/** Dial sessions advance through numbers, while the lead book stays one row per person. */
+export type DialQueueEntry = ScoredLead & { _queuePhone: string; _queueKey: string };
+export function buildDialQueue(leads: LeadWithBucket[]): DialQueueEntry[] {
+  return buildQueue(leads).flatMap((lead) => leadPhones(lead).map((phone) => ({
+    ...lead, _queuePhone: phone, _queueKey: `${lead.id}:${phone}`,
+  })));
+}
+
+/** Advance one number, or finish the current person after a live conversation. */
+export function nextDialIndex(entries: { id: string }[], index: number, finishLead = false): number {
+  let next = index + 1;
+  if (finishLead) while (next < entries.length && entries[next].id === entries[index]?.id) next++;
+  return next;
 }

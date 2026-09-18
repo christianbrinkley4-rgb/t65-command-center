@@ -1,5 +1,5 @@
 import type { Lead } from "./types";
-import { canonicalPhone } from "./phone";
+import { leadPhones } from "./phone";
 
 function cell(v: unknown): string {
   const s = v === null || v === undefined ? "" : String(v);
@@ -41,28 +41,25 @@ export function leadsToCsv(leads: Lead[]): string {
 }
 
 // DeftSales (SmartAsset AMP) import template — exact headers and E.164 phones
-// the import wizard expects. Leads without a dialable 10-digit number and DNC
-// leads are excluded, and numbers are deduped so the same household can't be
-// FastCalled twice. Import these ONLY into the call-only OSCR/T65 Lead Type:
-// none of these leads carry SMS/email consent, so they must never land on a
-// campaign with text or email steps.
+// the import wizard expects. DNC leads are included and both valid numbers
+// are exported as separate rows. Identical phone numbers are deduplicated.
 export function deftSalesCsv(leads: Lead[]): { csv: string; rows: number; skipped: number } {
   const header = "FirstName,LastName,Email,PhoneNumber,ZipCode";
   const seen = new Set<string>();
   const rows: string[] = [];
   let skipped = 0;
   for (const l of leads) {
-    const ph = canonicalPhone(l.phone) || canonicalPhone(l.phone2);
-    if (ph.length !== 10 || l.do_not_call || seen.has(ph)) {
-      skipped += 1;
-      continue;
+    const phones = leadPhones(l);
+    if (!phones.length) skipped += 1;
+    for (const ph of phones) {
+      if (seen.has(ph)) { skipped += 1; continue; }
+      seen.add(ph);
+      const name = String(l.name || "").trim();
+      const sp = name.indexOf(" ");
+      const first = sp > 0 ? name.slice(0, sp) : name;
+      const last = sp > 0 ? name.slice(sp + 1) : "";
+      rows.push([cell(first), cell(last), cell(l.email || ""), ph, cell(l.zip || "")].join(","));
     }
-    seen.add(ph);
-    const name = String(l.name || "").trim();
-    const sp = name.indexOf(" ");
-    const first = sp > 0 ? name.slice(0, sp) : name;
-    const last = sp > 0 ? name.slice(sp + 1) : "";
-    rows.push([cell(first), cell(last), cell(l.email || ""), `+1${ph}`, cell(l.zip || "")].join(","));
   }
   return { csv: [header, ...rows].join("\n"), rows: rows.length, skipped };
 }

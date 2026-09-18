@@ -37,3 +37,14 @@ export function altPhone(lead: { phone?: string | null; phone2?: string | null }
   if (!p2) return null;
   return samePhone(lead.phone, p2) ? null : p2;
 }
+
+/** Every distinct valid US phone on a lead, in primary/secondary order. */
+export function leadPhones(lead: { phone?: string | null; phone2?: string | null }): string[] {
+  return [...new Set([lead.phone, lead.phone2].map(canonicalPhone).filter((p) => p.length === 10))]
+    .map((p) => `+1${p}`);
+}
+
+/** The other valid line relative to the number currently in the dial queue. */
+export function otherLeadPhone(lead: { phone?: string | null; phone2?: string | null }, current: string): string | null {
+  return leadPhones(lead).find((phone) => !samePhone(phone, current)) ?? null;
+}

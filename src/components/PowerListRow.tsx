@@ -18,7 +18,7 @@ import LeadAddress from "@/components/LeadAddress";
 import { listLabel } from "@/lib/categories";
 import { homeValueSuspect, trustedHomeValue } from "@/lib/homeValue";
 import { iepPhase, IEP_LABEL, isFresh, turns65Label, withinCallingHours, type ScoredLead } from "@/lib/priority";
-import { formatPhone } from "@/lib/phone";
+import { formatPhone, leadPhones } from "@/lib/phone";
 
 // Short labels for the one-tap call results, in the order agents actually use.
 const RESULT_LABEL: Record<string, string> = {
@@ -92,7 +92,7 @@ export default function PowerListRow({
   const suspectValue = homeValueSuspect(lead, sharedAddress);
   const due = dueText(lead);
   const callingOpen = withinCallingHours();
-  const dialNum = lead.phone || lead.phone2 || "";
+  const dialNumbers = leadPhones(lead);
 
   async function run(fn: () => Promise<void>) {
     if (busy) return;
@@ -242,11 +242,12 @@ export default function PowerListRow({
           </p>
         </div>
 
-        {/* Phone (tap to call) */}
-        <div>
-          {dialNum ? (
+        {/* All phone numbers (tap to call) */}
+        <div className="flex flex-col items-start gap-1">
+          {dialNumbers.length ? dialNumbers.map((dialNum) => (
             callingOpen ? (
               <a
+                key={dialNum}
                 href={`tel:${dialNum}`}
                 onClick={() => call(dialNum)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand/10 px-2.5 py-1.5 text-xs font-semibold text-brand-dark transition hover:bg-brand hover:text-white"
@@ -254,14 +255,14 @@ export default function PowerListRow({
                 <Phone size={12} /> {formatPhone(dialNum)}
               </a>
             ) : (
-              <span
+              <span key={dialNum}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs text-later"
                 title="Outside the 8am–9pm calling window"
               >
                 <Phone size={12} /> {formatPhone(dialNum)}
               </span>
             )
-          ) : (
+          )) : (
             <span className="text-xs text-later">no phone</span>
           )}
         </div>

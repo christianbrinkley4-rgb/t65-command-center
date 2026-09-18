@@ -102,6 +102,8 @@ const CLOSED_IN_SPIRIT = [
 export function isClosedStatus(status: string | null | undefined): boolean {
   const s = String(status || "").trim().toLowerCase();
   if (!s) return false;
+  // DNC is retained as metadata; it does not remove the lead from work queues.
+  if (/^(?:closed\s*[-:]\s*)?(?:dnc|do[ -]?not[ -]?call)$/.test(s)) return false;
   if (s.startsWith("closed")) return true;
   return CLOSED_IN_SPIRIT.some((c) => s.includes(c));
 }
