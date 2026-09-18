@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Phone, PhoneCall, PhoneOff, Play, Voicemail, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { buildQueue, iepPhase, IEP_LABEL, isFresh, withinCallingHours, scoreLead } from "@/lib/priority";
+import { buildQueue, iepPhase, IEP_LABEL, isFresh, turns65Label, withinCallingHours, scoreLead } from "@/lib/priority";
 import {
   applyDisposition,
   DISPOSITIONS,
@@ -609,6 +609,9 @@ export default function SessionPage() {
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
               {isFresh(lead) && <span className="rounded bg-brand px-2 py-0.5 text-[11px] font-bold uppercase text-white">New</span>}
+              <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${turns65Label(lead.birthday) ? "bg-verify-50 text-verify" : "bg-due-50 text-due"}`}>
+                {turns65Label(lead.birthday) ? `T65 ${turns65Label(lead.birthday)}` : "T65 date missing"}
+              </span>
               {phase && phase !== "outside" && <span className="rounded bg-newlead px-2 py-0.5 text-[11px] font-semibold text-white">{IEP_LABEL[phase]}</span>}
             </div>
           </div>

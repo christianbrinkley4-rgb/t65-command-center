@@ -3,6 +3,7 @@
 import type { LeadWithBucket } from "@/lib/types";
 import { formatPhone } from "@/lib/phone";
 import { nextPendingAction } from "@/lib/actions";
+import { turns65Label } from "@/lib/priority";
 
 export default function LeadRow({
   lead,
@@ -49,6 +50,8 @@ export default function LeadRow({
             : `${lead.city || "—"}, ${lead.state || "NC"}`}
           {" · "}
           {formatPhone(lead.phone) || "no phone"}
+          {" · "}
+          {turns65Label(lead.birthday) ? `T65 ${turns65Label(lead.birthday)}` : "T65 date missing"}
           {lead.assigned_to && lead.assigned_to !== "Both" ? ` · ${lead.assigned_to}` : ""}
         </p>
       </div>
