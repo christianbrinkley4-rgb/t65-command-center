@@ -114,6 +114,8 @@ export default function LeadFilters({
           : `${value.results.length} last results`,
       clear: () => set({ results: [] }),
     });
+  if (value.dialCount !== "any")
+    chips.push({ label: `dials: ${value.dialCount}`, clear: () => set({ dialCount: "any" }) });
 
   const monthOptions = [
     ...MONTH_NAMES.map((m, i) => ({ value: String(i + 1), label: `${m} birthdays` })),
@@ -219,6 +221,22 @@ export default function LeadFilters({
                 onChange={(results) => set({ results })}
                 searchable={false}
               />
+              <select
+                aria-label="Filter by number of dials"
+                value={value.dialCount}
+                onChange={(e) => set({ dialCount: e.target.value as LeadFilterState["dialCount"] })}
+                className={
+                  value.dialCount === "any"
+                    ? "rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked"
+                    : "rounded-lg border border-brand bg-brand-light px-2.5 py-1.5 text-xs font-semibold text-brand-dark"
+                }
+              >
+                <option value="any">Number of dials: any</option>
+                <option value="0">0 dials</option>
+                <option value="1-2">1–2 dials</option>
+                <option value="3+">3+ dials</option>
+                <option value="5+">5+ dials</option>
+              </select>
             </div>
 
             <select

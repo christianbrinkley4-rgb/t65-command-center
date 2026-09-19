@@ -38,13 +38,15 @@ export type LeadFilterState = {
   results: string[];
   /** Which kinds of line to dial. See LINE_TYPE_FILTERS. */
   lineType: string;
+  /** How many times anyone has dialed them. */
+  dialCount: "any" | "0" | "1-2" | "3+" | "5+";
 };
 
 export const emptyFilter: LeadFilterState = {
   cities: [], zips: [], lists: [], months: [], counties: [],
   band: "any", includeUnpriced: true, occupancy: "any",
   maxMiles: 0, origin: "office", includeUnmapped: true,
-  worked: "any", results: [], lineType: "any",
+  worked: "any", results: [], lineType: "any", dialCount: "any",
 };
 
 /**
@@ -158,7 +160,8 @@ export function activeCount(f: LeadFilterState): number {
     (f.maxMiles > 0 ? 1 : 0) +
     (f.worked !== "any" ? 1 : 0) +
     (f.results.length ? 1 : 0) +
-    (f.lineType !== "any" ? 1 : 0)
+    (f.lineType !== "any" ? 1 : 0) +
+    (f.dialCount !== "any" ? 1 : 0)
   );
 }
 
@@ -193,6 +196,11 @@ export function matchesFilter(
   if (!matchesWorked(lead, f.worked)) return false;
   if (f.results.length && !f.results.includes(classifyLeadResult(lead))) return false;
   if (!matchesLineType(lead, f.lineType)) return false;
+  const dials = Number(lead.dials_count || 0);
+  if (f.dialCount === "0" && dials !== 0) return false;
+  if (f.dialCount === "1-2" && (dials < 1 || dials > 2)) return false;
+  if (f.dialCount === "3+" && dials < 3) return false;
+  if (f.dialCount === "5+" && dials < 5) return false;
   return true;
 }
 
