@@ -4,7 +4,7 @@
 // order, one-tap the outcome at each door. Phone-DNC leads are INCLUDED on
 // purpose — the door is the only compliant channel left for them.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DoorOpen,
   MapPin,
@@ -53,7 +53,8 @@ import {
   VALUE_BANDS,
   type Occupancy,
 } from "@/lib/valueBands";
-import { ACTION_ASSIGNEES, needsInfo } from "@/lib/types";
+import { isKnockableLead, mailerBatches } from "@/lib/knockSelection";
+import { ACTION_ASSIGNEES } from "@/lib/types";
 import type { ActionAssignee, LeadWithBucket } from "@/lib/types";
 
 // datetime-local wants "YYYY-MM-DDTHH:MM" in LOCAL time — toISOString() would
@@ -208,21 +209,31 @@ export default function KnockPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radius]);
 
-  // Knockable book: has an address, door not off-limits, not a closed lead.
-  // Phone-DNC and no-phone leads stay in — that's the point of knocking.
-  const knockable = useMemo(
-    () =>
-      leads.filter(
-        (l) =>
-          (l.address || "").trim() !== "" &&
-          !l.do_not_knock &&
-          // Flagged as wrong info at a door — don't send anyone back to the
-          // same bad address until the record is corrected.
-          !needsInfo(l) &&
-          !(l.stage_bucket === "Closed" || (l.status || "").startsWith("Closed"))
-      ),
-    [leads]
-  );
+  // A bad phone number does not remove a usable door from route planning.
+  const knockable = useMemo(() => leads.filter(isKnockableLead), [leads]);
+  const mailedLists = useMemo(() => mailerBatches(leads), [leads]);
+
+  const selectMailerBatch = useCallback((tag: string) => {
+    setCities([]);
+    setZips([]);
+    setLists([tag]);
+    setMonths([]);
+    setBand("any");
+    setIncludeUnknownValue(true);
+    setOccupancy("any");
+    setT65Filter("all");
+    setPhoneFilter("all");
+    setShowKnockedToday(true);
+    setRadius(0);
+    setDone(new Set());
+    setRoute(null);
+    setRouteErr(null);
+  }, []);
+
+  useEffect(() => {
+    const list = new URLSearchParams(window.location.search).get("list");
+    if (list && /-mailers-\d{4}-\d{2}-\d{2}$/.test(list)) selectMailerBatch(list);
+  }, [selectMailerBatch]);
 
   // Counts next to each option: you can see a ZIP holds 12 doors before you
   // pick it, instead of selecting it and watching the list go empty.
@@ -1025,6 +1036,29 @@ ${prior}` : entry,
           </button>
         </div>
       </div>
+
+      {mailedLists.length > 0 && (
+        <section className="mb-4 rounded-xl border border-brand/30 bg-brand-light p-4" aria-label="Mailed leads">
+          <h2 className="text-sm font-semibold text-ink">Mailed leads</h2>
+          <p className="mt-1 text-xs text-worked">Choose a mailing list, then use Plan route to arrange your stops.</p>
+          <div className="mt-3 flex flex-col gap-2">
+            {mailedLists.map((batch) => (
+              <button
+                key={batch.tag}
+                onClick={() => selectMailerBatch(batch.tag)}
+                aria-pressed={lists.length === 1 && lists[0] === batch.tag}
+                className="flex items-center justify-between gap-3 rounded-lg border border-brand/25 bg-white px-3 py-3 text-left hover:bg-paper"
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-brand-dark">{batch.label}</span>
+                  <span className="block text-xs text-worked">Sent {new Date(batch.sent + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} &middot; {batch.count} leads</span>
+                </span>
+                <span className="shrink-0 text-xs font-semibold text-brand-dark">{lists.length === 1 && lists[0] === batch.tag ? "Selected" : "Show doors"}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {routeErr && (
         <p role="alert" className="mb-3 rounded-xl border border-overdue/40 bg-overdue-50 px-3.5 py-2.5 text-xs text-overdue">
