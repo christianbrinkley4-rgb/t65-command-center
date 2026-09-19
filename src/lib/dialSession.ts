@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabaseClient";
 import type { ScoredLead } from "@/lib/priority";
-import { formatPhone } from "@/lib/phone";
+import { formatPhone, otherLeadPhone } from "@/lib/phone";
 
 export type DialSession = {
   id: string;
@@ -16,14 +16,14 @@ export type DialSession = {
   updated_at: string;
 };
 
-export async function createDialSession(agent: string, queue: ScoredLead[]) {
+export async function createDialSession(agent: string, queue: (ScoredLead & { _queuePhone?: string })[]) {
   const { data: user } = await supabase.auth.getUser();
   if (!user.user) throw new Error("Sign in before starting a shared dial session.");
   const rows = queue.map((lead) => ({
     id: lead.id,
     name: lead.name,
-    phone: formatPhone(lead.phone),
-    phone2: formatPhone(lead.phone2),
+    phone: formatPhone(lead._queuePhone || lead.phone),
+    phone2: formatPhone(lead._queuePhone ? otherLeadPhone(lead, lead._queuePhone) : lead.phone2),
   }));
   const { data, error } = await supabase
     .from("dial_sessions")

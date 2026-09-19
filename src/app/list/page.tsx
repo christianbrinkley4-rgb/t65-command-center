@@ -111,7 +111,7 @@ export default function PowerListPage() {
     const stamp = new Date().toISOString().slice(0, 10);
     downloadCsv(`DeftSales_Import_${seg}_${rows}_${stamp}.csv`.replace(/[^\w.-]+/g, "_"), csv);
     window.alert(
-      `${rows} leads exported (${skipped} skipped: DNC, no dialable number, or duplicate phone).\n\n` +
+      `${rows} phone numbers exported (${skipped} skipped: no valid number, asked to stop, or duplicate phone). List-scrub DNC flags are ignored.\n\n` +
         "Import into the call-only OSCR/T65 Lead Type in DeftSales — these leads have no SMS or email consent, so they must never join a campaign with text or email steps."
     );
   }
@@ -172,7 +172,7 @@ export default function PowerListPage() {
           <button
             onClick={exportDeftSales}
             disabled={queue.length === 0}
-            title="Download this view in DeftSales' exact import template (FirstName, LastName, Email, PhoneNumber, ZipCode — E.164 phones, DNC and duplicates removed)"
+            title="Download this view in DeftSales' exact import template (FirstName, LastName, Email, PhoneNumber, ZipCode — E.164 phones, both numbers included, list-scrub DNC ignored, people who asked to stop removed, duplicate numbers removed)"
             className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs text-worked hover:bg-paper disabled:opacity-50"
           >
             <Download size={13} /> DeftSales

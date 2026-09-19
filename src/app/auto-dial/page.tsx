@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Check, Phone, Play, Undo2 } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { buildQueue, type ScoredLead } from "@/lib/priority";
+import { buildDialQueue, nextDialIndex, type DialQueueEntry } from "@/lib/priority";
 import { applyDisposition, DISPOSITIONS, type Disposition } from "@/lib/dispositions";
 import { useFilterOrigin } from "@/hooks/useFilterOrigin";
 import { emptyFilter, matchesFilter, type LeadFilterState } from "@/lib/leadFilter";
@@ -14,13 +14,13 @@ import LeadFilters from "@/components/LeadFilters";
 import { birthMonthLabel, leadLists } from "@/lib/categories";
 import { trustedHomeValue } from "@/lib/homeValue";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
-import { altPhone } from "@/lib/phone";
+import { otherLeadPhone, formatPhone } from "@/lib/phone";
 import { logActivity } from "@/lib/sequences";
 
 export default function AutoDialPage() {
   const { leads, who, me, sequences, steps, worked, markWorked, reload } = useApp();
   const [filter, setFilter] = useState<LeadFilterState>({ ...emptyFilter });
-  const [queue, setQueue] = useState<ScoredLead[]>([]);
+  const [queue, setQueue] = useState<DialQueueEntry[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -33,21 +33,22 @@ export default function AutoDialPage() {
   const { origin, usingFallback } = useFilterOrigin(filter);
 
   const preview = useMemo(() => {
-    let q = buildQueue(leads.filter((lead) => matchesWho(lead, who))).filter((lead) => !worked.has(lead.id));
+    let q = buildDialQueue(leads.filter((lead) => matchesWho(lead, who))).filter((lead) => !worked.has(lead.id));
     return q.filter((lead) => matchesFilter(lead, filter, multiUnit.has(householdKey(lead)), origin));
   }, [leads, multiUnit, origin, who, worked, filter]);
 
-  const currentLead = queue[queueIndex] ?? null;
+  const queuedEntry = queue[queueIndex];
+  const currentLead = queuedEntry ? { ...queuedEntry, ...leads.find((l) => l.id === queuedEntry.id) } : null;
 
-  function dialLeadNow(lead: ScoredLead) {
-    const leadPhone = lead.phone || lead.phone2 || "";
+  function dialLeadNow(lead: DialQueueEntry) {
+    const leadPhone = lead._queuePhone;
     if (!leadPhone) {
       setMessage(`No callable number on file for ${lead.name || "this lead"}.`);
       return;
     }
 
-    if (lead.phone) {
-      logActivity(lead.id, "Call", "Dial", `Dialed ${lead.phone}`, me).catch(() => {});
+    if (leadPhone) {
+      logActivity(lead.id, "Call", "Dial", `Dialed ${leadPhone}`, me).catch(() => {});
     }
 
     setMessage(`Dialing ${lead.name || "lead"} on ${leadPhone}…`);
@@ -78,9 +79,12 @@ export default function AutoDialPage() {
     setErr(null);
     try {
       await applyDisposition(currentLead, d, me, sequences, steps, true, note);
-      markWorked(currentLead.id);
-
-      const nextIndex = queueIndex + 1;
+      await reload();
+      // A connected/finished lead is done; an unanswered first phone leaves
+      // the other number next in line.
+      const finishLead = ["int", "nr", "ni", "info"].includes(d.key);
+      const nextIndex = nextDialIndex(queue, queueIndex, finishLead);
+      if (finishLead || !queue.slice(nextIndex).some((l) => l.id === currentLead.id)) markWorked(currentLead.id);
       setQueueIndex(nextIndex);
       setNote("");
       setMessage(`Logged ${d.label}. Moving to the next lead.`);
@@ -116,7 +120,7 @@ export default function AutoDialPage() {
       <div className="mx-auto max-w-xl">
         <h1 className="font-display text-2xl font-semibold text-ink">Auto Dial</h1>
         <p className="mt-1 text-sm text-worked">
-          Load the same ranked queue as the dial session, then let it call through one lead at a time.
+          Load the same ranked queue as the dial session, then let it call through one phone number at a time. Both numbers stay in the queue, including DNC numbers.
         </p>
 
         <div className="mt-5 rounded-2xl border border-line bg-white p-5 shadow-card">
@@ -143,7 +147,7 @@ export default function AutoDialPage() {
           )}
 
           <p className="mt-4 text-sm text-worked">
-            <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> leads ready in this queue.
+            <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> numbers ready in this queue.
           </p>
           <button
             onClick={beginQueue}
@@ -176,7 +180,7 @@ export default function AutoDialPage() {
   }
 
   const phase = currentLead._why || [];
-  const leadPhone = currentLead.phone || currentLead.phone2 || "";
+  const leadPhone = currentLead._queuePhone;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -208,8 +212,8 @@ export default function AutoDialPage() {
             </p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
-            {currentLead.phone && altPhone(currentLead) && (
-              <span className="rounded bg-brand px-2 py-0.5 text-[11px] font-bold uppercase text-white">2nd line</span>
+            {otherLeadPhone(currentLead, currentLead._queuePhone) && (
+              <span className="rounded bg-brand px-2 py-0.5 text-[11px] font-bold uppercase text-white">Two numbers</span>
             )}
           </div>
         </div>
@@ -222,19 +226,19 @@ export default function AutoDialPage() {
               onClick={() => dialLeadNow(currentLead)}
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
             >
-              <Phone size={18} /> Call {leadPhone}
+              <Phone size={18} /> Call {formatPhone(leadPhone)}
             </button>
           )}
-          {currentLead.phone && altPhone(currentLead) && (
+          {otherLeadPhone(currentLead, currentLead._queuePhone) && (
             <button
               onClick={() => {
-                const alt = altPhone(currentLead);
+                const alt = otherLeadPhone(currentLead, currentLead._queuePhone);
                 if (!alt) return;
                 window.location.href = `tel:${alt}`;
               }}
               className="rounded-xl border border-line px-3 py-3 text-sm font-medium text-worked hover:bg-paper"
             >
-              2nd
+              Other
             </button>
           )}
         </div>

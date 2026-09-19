@@ -114,7 +114,11 @@ export function needsInfo(lead: { status?: string | null; stage_bucket?: string 
  * closed. Merged and Invalid Lead are verdicts on the record. Only a dead line
  * comes back.
  */
-const PHONE_LINE_CLOSURE = /(bad|wrong|disconnected|invalid)\s*(phone\s*)?number/i;
+// A recorded DNC is also a verdict on the phone line only: it says nothing about
+// the door, so a DNC lead stays knockable and the card shows the phone result.
+// A recorded DNC is also a verdict on the phone line only: it says nothing about
+// the door, so a DNC lead stays knockable and the card shows the phone result.
+const PHONE_LINE_CLOSURE = /\b(bad|wrong|disconnected|invalid)\s*(phone\s*)?number\b|\bdnc\b|do[ -]?not[ -]?call/i;
 
 export function closedOnPhoneOnly(lead: { status?: string | null }): boolean {
   const s = String(lead.status || "");
@@ -149,6 +153,8 @@ const CLOSED_IN_SPIRIT = [
 export function isClosedStatus(status: string | null | undefined): boolean {
   const s = String(status || "").trim().toLowerCase();
   if (!s) return false;
+  // DNC is retained as metadata; it does not remove the lead from work queues.
+  if (/^(?:closed\s*[-:]\s*)?(?:dnc|do[ -]?not[ -]?call)$/.test(s)) return false;
   if (s.startsWith("closed")) return true;
   return CLOSED_IN_SPIRIT.some((c) => s.includes(c));
 }

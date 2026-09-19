@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Phone, PhoneCall, Play, Voicemail, MessageSquare, ShieldCheck, SkipForward, Undo2, X, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/context";
 import { matchesWho } from "@/lib/buckets";
-import { heldBackCounts, iepPhase, withinCallingHours, scoreLead } from "@/lib/priority";
+import { heldBackCounts, iepPhase, withinCallingHours, scoreLead, nextDialIndex, expandDialPhones } from "@/lib/priority";
 import { buildSegment, findSegment, segmentContext, segmentsFor } from "@/lib/segments";
 import { supabase } from "@/lib/supabaseClient";
 import {
@@ -19,7 +19,7 @@ import {
 } from "@/lib/dispositions";
 import { logActivity } from "@/lib/sequences";
 import { fetchTemplates, fillTemplate } from "@/lib/templates";
-import { altPhone, bestPhone, formatPhone } from "@/lib/phone";
+import { altPhone, bestPhone, formatPhone, otherLeadPhone } from "@/lib/phone";
 import { canText, grantSmsConsent, logText, smsBody, smsHref, textBlockReason } from "@/lib/sms";
 import { useFilterOrigin } from "@/hooks/useFilterOrigin";
 import { distanceLabel, milesFrom, OFFICE } from "@/lib/distance";
@@ -32,7 +32,7 @@ import { emptyFilter, matchesFilter, type LeadFilterState } from "@/lib/leadFilt
 import { DIALABLE_RESULTS, LEAD_RESULT_OPTIONS, type LeadResult } from "@/lib/callOutcomes";
 import { householdKey, multiUnitAddressKeys } from "@/lib/knock";
 import { trustedHomeValue } from "@/lib/homeValue";
-import type { ScoredLead } from "@/lib/priority";
+import type { ScoredLead, DialQueueEntry } from "@/lib/priority";
 import type { Template } from "@/lib/types";
 import { createDialSession, updateDialSession, closeDialSession, type DialSession } from "@/lib/dialSession";
 
@@ -55,14 +55,14 @@ export default function SessionPage() {
   const [seg, setSeg] = useState<string>("all");
   const [filter, setFilter] = useState<LeadFilterState>({ ...emptyFilter });
   const [started, setStarted] = useState(false);
-  const [ids, setIds] = useState<string[]>([]);
+  const [ids, setIds] = useState<{ id: string; phone: string }[]>([]);
   const [idx, setIdx] = useState(0);
   const [startTime, setStartTime] = useState(0);
   const [now, setNow] = useState(0);
   const [counts, setCounts] = useState({ dials: 0, contacts: 0, appts: 0, sold: 0 });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [lastUndo, setLastUndo] = useState<{ snap: LeadSnapshot; name: string; id: string } | null>(null);
+  const [lastUndo, setLastUndo] = useState<{ snap: LeadSnapshot; name: string; id: string; index: number } | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [copied, setCopied] = useState(false);
   const [apptDt, setApptDt] = useState("");
@@ -119,11 +119,14 @@ export default function SessionPage() {
     () => heldBackCounts(leads.filter((l) => matchesWho(l, who))),
     [leads, who]
   );
+  // One entry per phone number: both lines of a person get dialed, mobile first.
   const preview = useMemo(
     () =>
-      buildSegment(seg, leads.filter((l) => matchesWho(l, who)), segCtx)
-        .filter((l) => !worked.has(l.id))
-        .filter((l) => matchesFilter(l, filter, multiUnit.has(householdKey(l)), origin)),
+      expandDialPhones(
+        buildSegment(seg, leads.filter((l) => matchesWho(l, who)), segCtx)
+          .filter((l) => !worked.has(l.id))
+          .filter((l) => matchesFilter(l, filter, multiUnit.has(householdKey(l)), origin))
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [leads, who, worked, seg, filter, multiUnit, origin, segCtx]
   );
@@ -134,11 +137,11 @@ export default function SessionPage() {
     [filter.results]
   );
 
-  const lead = useMemo<ScoredLead | null>(() => {
+  const lead = useMemo<DialQueueEntry | null>(() => {
     if (!started) return null;
     for (let i = idx; i < ids.length; i++) {
-      const l = leads.find((x) => x.id === ids[i]);
-      if (l) return scoreLead(l);
+      const l = leads.find((x) => x.id === ids[i].id);
+      if (l) return { ...scoreLead(l), _queuePhone: ids[i].phone, _queueKey: `${l.id}:${ids[i].phone}` };
     }
     return null;
   }, [started, ids, idx, leads]);
@@ -157,7 +160,7 @@ export default function SessionPage() {
 
   function start() {
     const q = preview;
-    setIds(q.map((l) => l.id));
+    setIds(q.map((l) => ({ id: l.id, phone: l._queuePhone })));
     setIdx(0);
     setStartTime(Date.now());
     setNow(Date.now());
@@ -169,12 +172,14 @@ export default function SessionPage() {
     });
   }
 
-  function advance(id: string) {
-    markWorked(id);
-    const nextIndex = idx + 1;
-    setIdx((i) => i + 1);
+  function advance(id: string, finishLead = false) {
+    const nextIndex = nextDialIndex(ids, idx, finishLead);
+    // Only mark the person worked once their last number is behind us (or a
+    // conversation ended it); otherwise the second line is still to dial.
+    if (finishLead || !ids.slice(nextIndex).some((entry) => entry.id === id)) markWorked(id);
+    setIdx(nextIndex);
     if (sharedSession) {
-      const nextLeadId = ids[nextIndex] || null;
+      const nextLeadId = ids[nextIndex]?.id || null;
       void updateDialSession(sharedSession.id, {
         current_index: nextIndex,
         current_lead_id: nextLeadId,
@@ -208,8 +213,9 @@ export default function SessionPage() {
         appts: c.appts,
         sold: c.sold,
       }));
-      setLastUndo({ snap, name, id: lead.id });
-      advance(lead.id);
+      setLastUndo({ snap, name, id: lead.id, index: idx });
+      await reload();
+      advance(lead.id, ["int", "nr", "ni", "info"].includes(d.key));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -228,8 +234,8 @@ export default function SessionPage() {
       const id = lead.id;
       await setAppointment(lead, apptDt, me);
       setCounts((c) => ({ ...c, dials: c.dials + 1, contacts: c.contacts + 1, appts: c.appts + 1 }));
-      setLastUndo({ snap, name: lead.name || "lead", id });
-      advance(id);
+      setLastUndo({ snap, name: lead.name || "lead", id, index: idx });
+      advance(id, true);
     } finally { setBusy(false); }
   }
 
@@ -240,16 +246,16 @@ export default function SessionPage() {
       const snap = snapshotLead(lead); const id = lead.id; const name = lead.name || "lead";
       await markSold(lead, me);
       setCounts((c) => ({ ...c, dials: c.dials + 1, contacts: c.contacts + 1, sold: c.sold + 1 }));
-      setLastUndo({ snap, name, id });
-      advance(id);
+      setLastUndo({ snap, name, id, index: idx });
+      advance(id, true);
     } finally { setBusy(false); }
   }
 
-  // Log the number actually dialed, not the primary. Tapping "2nd" used to
+  // Log the number actually dialed, not the primary. Tapping "Other" used to
   // record the cell you didn't call, which makes the trail lie about which
   // line went unanswered.
-  function onDial(dialed: string) {
-    if (dialed) logActivity(lead!.id, "Call", "Dial", `Dialed ${dialed}`, me).catch(() => {});
+  function onDial(phone = lead?._queuePhone) {
+    if (lead && phone) logActivity(lead.id, "Call", "Dial", `Dialed ${phone}`, me).catch(() => {});
   }
 
   // One tap, one handset dial.
@@ -271,14 +277,7 @@ export default function SessionPage() {
   // happened as far as the book is concerned.
   function placeCall(alt = false) {
     if (!lead) return;
-    // bestPhone, not lead.phone. When a lead's primary is a confirmed landline
-    // and their second number is a confirmed mobile, the mobile is the one
-    // worth ringing: on this book a dialed landline was a dead number 68.8% of
-    // the time against 11.8% for a mobile. "alt" still means the other one,
-    // whichever the other one now is.
-    const best = bestPhone(lead);
-    const other = best.swapped ? lead.phone || "" : altPhone(lead) || "";
-    const leadPhone = (alt ? other : best.number) || best.number || "";
+    const leadPhone = (alt ? otherLeadPhone(lead, lead._queuePhone) : lead._queuePhone) || lead._queuePhone;
     if (!leadPhone) return;
     onDial(leadPhone);
     window.location.href = `tel:${leadPhone}`;
@@ -352,7 +351,7 @@ export default function SessionPage() {
       await revertLead(lastUndo.snap, me);
       unmarkWorked(lastUndo.id);
       // step back so the reverted lead is shown again
-      setIdx((i) => Math.max(0, i - 1));
+      setIdx(lastUndo.index);
       setLastUndo(null);
     } finally { setBusy(false); }
   }
@@ -448,7 +447,7 @@ export default function SessionPage() {
           )}
 
           <p className="mt-4 text-sm text-worked">
-            <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> leads ready in this session.
+            <span className="font-display text-2xl font-semibold text-ink">{preview.length}</span> numbers ready in this session.
           </p>
           {(held.worked > 0 || held.later > 0) && (
             <p className="mt-1 text-[11px] leading-relaxed text-later">
@@ -546,25 +545,17 @@ export default function SessionPage() {
                 onClick={() => placeCall()}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-base font-semibold text-white hover:bg-brand-dark"
               >
-                <Phone size={18} /> Call {formatPhone(bestPhone(lead).number)}
-                {/* Say when the button is NOT ringing the number on the card.
-                    Silently dialing a different line than the one displayed is
-                    how you end up unable to explain your own call history. */}
-                {bestPhone(lead).swapped && <span className="text-white/70">(cell)</span>}
+                <Phone size={18} /> Call {formatPhone(lead._queuePhone)}
                 <span className="text-white/60">(C)</span>
               </button>
             )}
-            {lead.phone && altPhone(lead) && (
+            {otherLeadPhone(lead, lead._queuePhone) && (
               <button
                 onClick={() => placeCall(true)}
-                title={
-                  bestPhone(lead).swapped
-                    ? `Their landline: ${formatPhone(lead.phone)}`
-                    : `Try their other number: ${formatPhone(altPhone(lead))}`
-                }
+                title={`Try their other number: ${formatPhone(otherLeadPhone(lead, lead._queuePhone))}`}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-line px-3 py-3 text-sm font-medium text-worked hover:bg-paper"
               >
-                <PhoneCall size={16} /> 2nd
+                <PhoneCall size={16} /> Other
               </button>
             )}
             <button

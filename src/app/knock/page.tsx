@@ -61,6 +61,7 @@ import {
   deleteSavedRoute,
   loadCurrentRoute,
   loadSavedRoutes,
+  syncSharedRoutes,
   newRouteId,
   putCurrentRoute,
   putSavedRoute,
@@ -84,7 +85,8 @@ import {
   type Occupancy,
 } from "@/lib/valueBands";
 import { ACTION_ASSIGNEES, askedNotToBeCalled, closedOnPhoneOnly, needsInfo } from "@/lib/types";
-import type { ActionAssignee, Activity, LeadWithBucket } from "@/lib/types";
+import { classifyLeadResult, type LeadResult } from "@/lib/callOutcomes";
+import type { ActionAssignee, Activity, Lead, LeadWithBucket } from "@/lib/types";
 
 // datetime-local wants "YYYY-MM-DDTHH:MM" in LOCAL time — toISOString() would
 // shift an evening follow-up onto the wrong day.
@@ -145,6 +147,46 @@ function outcomeTone(label: string): string {
 }
 
 /** "4:46 PM" — the time alone; the day is already the section heading. */
+// What the PHONE did last time, shown on every door. DNC and bad numbers are
+// just results here: the door is knocked either way, and the point is to see
+// what already happened on the line before walking up.
+const PHONE_RESULT_LABEL: Partial<Record<LeadResult, string>> = {
+  interested: "Said they were interested",
+  notready: "Not ready",
+  appointment: "Appointment set",
+  sold: "Sold",
+  voicemail: "Left a voicemail",
+  noanswer: "No answer",
+  notinterested: "Not interested",
+  covered: "Covered elsewhere",
+  badnumber: "Bad number",
+  dnc: "DNC",
+  needsinfo: "Record needs fixing",
+  new: "Never called",
+};
+const PHONE_RESULT_WARN = new Set<LeadResult>(["dnc", "badnumber", "needsinfo"]);
+
+function PhoneResult({ occupants }: { occupants: Lead[] }) {
+  const withPhone = occupants.filter((o) => o.phone || o.phone2);
+  if (withPhone.length === 0) {
+    return <span className="rounded-md bg-paper px-1.5 py-0.5 font-medium text-later">No phone number</span>;
+  }
+  // The most informative result across the household, not just the first row.
+  const results = withPhone.map((o) => classifyLeadResult(o));
+  const result = results.find((r) => r !== "new") || "new";
+  return (
+    <span
+      className={
+        PHONE_RESULT_WARN.has(result)
+          ? "rounded-md bg-due-50 px-1.5 py-0.5 font-medium text-due"
+          : "rounded-md bg-paper px-1.5 py-0.5 font-medium text-worked"
+      }
+    >
+      Phone: {PHONE_RESULT_LABEL[result] || "Worked"}
+    </span>
+  );
+}
+
 function clockTime(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
@@ -629,6 +671,8 @@ export default function KnockPage() {
     if (restoredRef.current || leadsLoading) return;
     restoredRef.current = true;
     setSavedRoutes(loadSavedRoutes());
+    // Pull whatever Christian or Will saved on the other phone.
+    void syncSharedRoutes().then((r) => r && setSavedRoutes(r));
     const cur = loadCurrentRoute();
     if (!cur) return;
     setRouteRec(cur);
@@ -643,6 +687,18 @@ export default function KnockPage() {
     // openRoute and doorsByKey are read once, on the first load with a book.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadsLoading]);
+
+  // Coming back to the app (switching from Maps, unlocking the phone) is when
+  // a route saved on the other phone should show up.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void syncSharedRoutes().then((r) => r && setSavedRoutes(r));
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // Progress writes through on every knock. The alternative is a route that
   // remembers its doors but forgets which ones you did, which is the half of
@@ -713,12 +769,12 @@ export default function KnockPage() {
   function saveRouteAs(raw: string) {
     if (!routeRec) return;
     const name = raw.trim() || suggestRouteName(route || []);
-    const rec: SavedRoute = { ...routeRec, name, savedAt: new Date().toISOString() };
+    const rec: SavedRoute = { ...routeRec, name, by: me, savedAt: new Date().toISOString() };
     setRouteRec(rec);
     putCurrentRoute(rec);
     setSavedRoutes(putSavedRoute(rec));
     setNaming(false);
-    setRouteNote(`Saved as "${name}". Open it from Plan route any time.`);
+    setRouteNote(`Saved as "${name}" and shared with the team. Open it from Plan route on any phone.`);
   }
 
   function forgetRoute(id: string) {
@@ -1137,7 +1193,6 @@ ${prior}` : entry,
     // Occupants share a parcel, so the household's value is the best of them.
     const suspectValue = homeValueSuspect(hh.primary, multiUnit.has(hh.key));
     const hv = doorValue(hh);
-    const anyDnc = hh.occupants.some((o) => askedNotToBeCalled(o));
     const dialable = hh.occupants.find((o) => o.phone);
     const mapsUrl =
       "https://maps.google.com/?q=" +
@@ -1190,11 +1245,7 @@ ${prior}` : entry,
                   Verbose at the door: no hover, no time to decode a colour. */}
               <T65Badge birthday={lead.birthday} verbose />
 
-              {anyDnc && (
-                <span className="rounded-md bg-due-50 px-1.5 py-0.5 font-medium text-due">
-                  Phone DNC — knock first
-                </span>
-              )}
+              <PhoneResult occupants={hh.occupants} />
               {/* Everything already done to this door: the card, the dials,
                   the previous knocks. This used to be knocks only, so you could
                   walk up cold to a house that got a mailer eight days ago. */}
@@ -1474,7 +1525,6 @@ ${prior}` : entry,
     const outcome = knockOutcome(d);
     const rec = d.result;
     const open = reopened.has(hh.key);
-    const anyDnc = hh.occupants.some((o) => askedNotToBeCalled(o));
     const dialable = hh.occupants.find((o) => o.phone);
     const street = String(hh.address || "").split(",")[0] || "No address on file";
     const mapsUrl =
@@ -1520,9 +1570,7 @@ ${prior}` : entry,
           </span>
           <ContactTrail occupants={hh.occupants} size="xs" />
           <T65Badge birthday={lead.birthday} verbose />
-          {anyDnc && (
-            <span className="rounded-md bg-due-50 px-1.5 py-0.5 font-medium text-due">Phone DNC</span>
-          )}
+          <PhoneResult occupants={hh.occupants} />
           {d.closed && !d.doNotKnock && (
             <span className="rounded-md bg-paper px-1.5 py-0.5 font-medium text-later">Closed out</span>
           )}

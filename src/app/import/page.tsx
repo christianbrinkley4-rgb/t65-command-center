@@ -138,13 +138,10 @@ export default function ImportPage() {
     const existing = new Set(leads.map(exactLeadKey).filter((key): key is string => !!key));
     const seen = new Set<string>();
     const existingPhones = new Set(leads.map((lead) => normalizedPhone(lead.phone)).filter(Boolean));
-    const dncPhones = new Set(
-      leads.filter((l) => l.do_not_call).flatMap((l) => [normalizedPhone(l.phone), normalizedPhone(l.phone2)]).filter(Boolean)
-    );
     let empty = 0;
     let skipped = 0;
     let matchingPhone = 0;
-    let dncBlocked = 0;
+
     const rows: ImportRow[] = [];
 
     for (const row of rawRows) {
@@ -153,12 +150,7 @@ export default function ImportPage() {
         empty += 1;
         continue;
       }
-      // Never re-import a number that's on the Do-Not-Call list.
       const ph = normalizedPhone(row.phone);
-      if (ph && dncPhones.has(ph)) {
-        dncBlocked += 1;
-        continue;
-      }
       const key = exactLeadKey(row);
       if (skipExactDuplicates && key && (existing.has(key) || seen.has(key))) {
         skipped += 1;
@@ -168,7 +160,7 @@ export default function ImportPage() {
       if (ph && existingPhones.has(ph)) matchingPhone += 1;
       rows.push(row);
     }
-    return { rows, empty, skipped, matchingPhone, dncBlocked };
+    return { rows, empty, skipped, matchingPhone };
   }, [leads, rawRows, skipExactDuplicates]);
 
   async function selectFile(file: File | undefined) {
@@ -345,7 +337,7 @@ export default function ImportPage() {
               <p><span className="block text-xl font-semibold text-ink">{importPlan.rows.length.toLocaleString()}</span>ready to add</p>
               <p><span className="block text-xl font-semibold text-ink">{importPlan.skipped.toLocaleString()}</span>exact duplicates</p>
               <p><span className="block text-xl font-semibold text-ink">{importPlan.matchingPhone.toLocaleString()}</span>same phone, another source</p>
-              <p><span className="block text-xl font-semibold text-overdue">{importPlan.dncBlocked.toLocaleString()}</span>Do-Not-Call, blocked</p>
+              <p>List-scrub DNC flags are ignored; only people who asked to stop are held out.</p>
               <p><span className="block text-xl font-semibold text-ink">{importPlan.empty.toLocaleString()}</span>blank rows skipped</p>
             </div>
 

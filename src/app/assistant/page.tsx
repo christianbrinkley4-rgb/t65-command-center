@@ -73,7 +73,7 @@ export default function AssistantPage() {
         seen.add(key);
         const p = canonicalPhone(l.phone);
         const flag: RowState["flag"] = p && dncPhones.has(p) ? "dnc-phone" : p && existingPhones.has(p) ? "existing-phone" : "new";
-        next.push({ ...l, include: flag === "new", flag });
+        next.push({ ...l, include: flag === "new" || (flag === "dnc-phone" && !existingPhones.has(p)), flag });
       }
       setRows(next);
     } finally {

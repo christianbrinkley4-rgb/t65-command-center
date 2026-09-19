@@ -18,7 +18,14 @@
 // localStorage, matching offline.ts: this is field state on one phone, it has
 // to survive a reboot in a driveway with no signal, and it must never wait on a
 // network round trip to tell you where you were.
+//
+// NAMED routes are also shared. Christian and Will each carry their own phone,
+// so a saved route is mirrored to the saved_views table (page = "knock-route")
+// and pulled back down on every device. localStorage stays the source the
+// screen reads from, so a dead zone still shows the list; the network only
+// ever adds to it. The route you're currently on is never shared.
 
+import { supabase } from "./supabaseClient";
 import type { Household } from "./knock";
 import type { LatLng, RoutePlan, Stop } from "./route";
 
@@ -31,6 +38,8 @@ export type SavedRoute = {
   start: LatLng;
   end: LatLng | null;
   plan: RoutePlan;
+  /** Who saved it, so the other phone can see whose route this is. */
+  by?: string;
   /** Household keys in walking order. */
   stops: string[];
   /** Which of those doors are already worked, so resuming shows the gap. */
@@ -73,6 +82,7 @@ function coerce(x: unknown): SavedRoute | null {
       ? { lat: end.lat, lng: end.lng }
       : null,
     plan: r.plan as RoutePlan,
+    by: typeof r.by === "string" && r.by.trim() ? r.by.trim() : undefined,
     stops: r.stops as string[],
     done: Array.isArray(r.done)
       ? (r.done.filter((d) => typeof d === "string") as string[])
@@ -134,13 +144,118 @@ export function loadSavedRoutes(): SavedRoute[] {
 export function putSavedRoute(r: SavedRoute): SavedRoute[] {
   const next = [r, ...loadSavedRoutes().filter((x) => x.id !== r.id)].slice(0, MAX_SAVED);
   write(SAVED_KEY, next);
+  void pushSharedRoute(r);
   return next;
 }
 
 export function deleteSavedRoute(id: string): SavedRoute[] {
   const next = loadSavedRoutes().filter((x) => x.id !== id);
   write(SAVED_KEY, next);
+  void removeSharedRoute(id);
   return next;
+}
+
+// ── sharing between phones ───────────────────────────────────────────────────
+
+const SHARED_PAGE = "knock-route";
+
+// Progress is written on every knock, which is far more often than anyone needs
+// a second phone to hear about it. One push per route per few seconds.
+const pushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Mirror a named route to the team. Never throws: offline just means later. */
+export function pushSharedRoute(r: SavedRoute): Promise<void> {
+  if (!r.name || typeof window === "undefined") return Promise.resolve();
+  const prior = pushTimers.get(r.id);
+  if (prior) clearTimeout(prior);
+  return new Promise((resolve) => {
+    pushTimers.set(
+      r.id,
+      setTimeout(async () => {
+        pushTimers.delete(r.id);
+        try {
+          const filters = { rid: r.id, route: JSON.stringify(r) };
+          const found = await supabase
+            .from("saved_views")
+            .select("id")
+            .eq("page", SHARED_PAGE)
+            .eq("filters->>rid", r.id)
+            .limit(1);
+          const existing = found.data?.[0]?.id as string | undefined;
+          if (existing) {
+            await supabase.from("saved_views").update({ name: r.name, filters }).eq("id", existing);
+          } else {
+            await supabase
+              .from("saved_views")
+              .insert({ name: r.name, page: SHARED_PAGE, filters, created_by: r.by ?? null });
+          }
+        } catch {
+          // Offline or signed out. The route is still saved on this phone and
+          // is pushed again the next time it's touched or synced.
+        }
+        resolve();
+      }, 1500)
+    );
+  });
+}
+
+export async function removeSharedRoute(id: string): Promise<void> {
+  try {
+    await supabase.from("saved_views").delete().eq("page", SHARED_PAGE).eq("filters->>rid", id);
+  } catch {
+    // Offline: it comes back on the next sync, and can be deleted again.
+  }
+}
+
+/**
+ * Pull the team's saved routes and merge them with this phone's. The newer copy
+ * of a route wins (progress on a door is a write, so "newer" is the phone that
+ * knocked most recently). Anything only this phone has is pushed up. Returns
+ * the merged list, or null if the network wasn't there, so the caller keeps
+ * what it already shows.
+ */
+export async function syncSharedRoutes(): Promise<SavedRoute[] | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    const { data, error } = await supabase
+      .from("saved_views")
+      .select("filters")
+      .eq("page", SHARED_PAGE);
+    if (error || !data) return null;
+    const remote = new Map<string, SavedRoute>();
+    for (const row of data) {
+      const f = row.filters as { route?: string } | null;
+      if (!f?.route) continue;
+      try {
+        const r = coerce(JSON.parse(f.route));
+        if (r && r.name) remote.set(r.id, r);
+      } catch {
+        // A row that isn't a route we wrote. Ignore it.
+      }
+    }
+    const local = loadSavedRoutes();
+    const localById = new Map(local.map((r) => [r.id, r]));
+    const merged = new Map<string, SavedRoute>();
+    for (const r of remote.values()) {
+      const mine = localById.get(r.id);
+      merged.set(r.id, mine && Date.parse(mine.savedAt) > Date.parse(r.savedAt) ? mine : r);
+    }
+    for (const r of local) {
+      if (!merged.has(r.id)) merged.set(r.id, r);
+    }
+    // Local-only or locally-newer copies go up so the other phone gets them.
+    for (const r of merged.values()) {
+      const theirs = remote.get(r.id);
+      if (!theirs || Date.parse(r.savedAt) > Date.parse(theirs.savedAt)) void pushSharedRoute(r);
+    }
+    const next = [...merged.values()]
+      .sort((a, b) => Date.parse(b.savedAt) - Date.parse(a.savedAt))
+      .slice(0, MAX_SAVED);
+    write(SAVED_KEY, next);
+    return next;
+  } catch {
+    return null;
+  }
 }
 
 // ── putting one back on screen ───────────────────────────────────────────────

@@ -84,3 +84,14 @@ export function bestPhone(lead: {
   if (flip) return { number: second, swapped: true };
   return { number: primary || second, swapped: false };
 }
+
+/** Every distinct valid US phone on a lead, in primary/secondary order. */
+export function leadPhones(lead: { phone?: string | null; phone2?: string | null }): string[] {
+  return [...new Set([lead.phone, lead.phone2].map(canonicalPhone).filter((p) => p.length === 10))]
+    .map((p) => `+1${p}`);
+}
+
+/** The other valid line relative to the number currently in the dial queue. */
+export function otherLeadPhone(lead: { phone?: string | null; phone2?: string | null }, current: string): string | null {
+  return leadPhones(lead).find((phone) => !samePhone(phone, current)) ?? null;
+}

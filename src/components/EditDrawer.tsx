@@ -558,7 +558,7 @@ export default function EditDrawer({
                 onClick={() => logDial(altPhone(lead)!)}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-line py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                <PhoneCall size={14} /> {altPhone(lead)}
+                <PhoneCall size={14} /> {formatPhone(altPhone(lead))}
               </a>
             )}
           </div>

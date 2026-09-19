@@ -310,6 +310,7 @@ export default function RoutePlanner({
                         {r.stops.length} door{r.stops.length === 1 ? "" : "s"} ·{" "}
                         {left === 0 ? "all worked" : `${left} left`} · updated{" "}
                         {savedAgo(r.savedAt)}
+                        {r.by ? ` · saved by ${r.by}` : ""}
                       </span>
                     </button>
                     {onDeleteSaved &&
@@ -338,7 +339,7 @@ export default function RoutePlanner({
             </div>
             <p className="mt-1.5 text-[11px] text-later">
               A saved route reopens with today&apos;s notes and outcomes, in the order you
-              planned it.
+              planned it. Saved routes are shared, so they show up on Will&apos;s phone too.
             </p>
           </div>
         )}
